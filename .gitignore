@@ -1,0 +1,13 @@
+.DS_Store
+.dart_tool/
+.packages
+build/
+.flutter-plugins
+.flutter-plugins-dependencies
+*.iml
+.idea/
+# 모델 파일은 용량이 커서 커밋하지 않음 — scripts/download_assets.sh로 받기
+assets/onnx/*
+assets/voice_styles/*
+!assets/onnx/.gitkeep
+!assets/voice_styles/.gitkeep

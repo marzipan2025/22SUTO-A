@@ -11,3 +11,12 @@ assets/onnx/*
 assets/voice_styles/*
 !assets/onnx/.gitkeep
 !assets/voice_styles/.gitkeep
+
+# Flutter/Android 빌드 산출물
+.dart_tool/
+build/
+android/.gradle/
+android/local.properties
+android/key.properties
+*.iml
+.idea/

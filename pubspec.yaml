@@ -13,7 +13,6 @@ dependencies:
   path_provider: ^2.1.1
   just_audio: ^0.10.5
   logger: ^2.0.2
-  receive_sharing_intent: ^1.8.1
 
 dev_dependencies:
   flutter_test:

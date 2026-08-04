@@ -2,10 +2,14 @@ import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:just_audio/just_audio.dart';
 import 'package:path_provider/path_provider.dart';
-import 'package:receive_sharing_intent/receive_sharing_intent.dart';
 import 'package:suto_a/helper.dart';
+
+/// 네이티브(MainActivity.kt)에서 공유된 글을 받아오는 통로
+const _shareMethod = MethodChannel('suto_a/share');
+const _shareEvents = EventChannel('suto_a/share_events');
 
 void main() => runApp(const SutoApp());
 
@@ -82,25 +86,24 @@ class _TTSPageState extends State<TTSPage> {
   // ---- 공유 수신 (구글드라이브/문서 앱 등에서 "공유 → 22SUTO-A") ----
   void _initShareIntent() {
     if (!Platform.isAndroid) return;
-    _intentSub = ReceiveSharingIntent.instance.getMediaStream().listen(
-          _onShared,
-          onError: (e) => logger.e('share intent error', error: e),
+
+    // 앱이 켜져 있는 동안 들어오는 공유
+    _intentSub = _shareEvents.receiveBroadcastStream().listen(
+          (event) => _onShared(event as String?),
+          onError: (e) => logger.e('share event error', error: e),
         );
-    ReceiveSharingIntent.instance.getInitialMedia().then((files) {
-      _onShared(files);
-      ReceiveSharingIntent.instance.reset();
-    });
+
+    // 공유로 앱이 처음 열린 경우
+    _shareMethod
+        .invokeMethod<String>('getInitialText')
+        .then(_onShared)
+        .catchError((e) => logger.e('initial share error', error: e));
   }
 
-  void _onShared(List<SharedMediaFile> files) {
-    final text = files
-        .where((f) =>
-            f.type == SharedMediaType.text || f.type == SharedMediaType.url)
-        .map((f) => f.path)
-        .join('\n')
-        .trim();
-    if (text.isEmpty) return;
-    _textController.text = text;
+  void _onShared(String? text) {
+    final t = (text ?? '').trim();
+    if (t.isEmpty) return;
+    _textController.text = t;
     if (_ready && !_busy) _speak();
   }
 

@@ -26,10 +26,16 @@ class SentenceItem {
 /// 그래서 사용자가 어느 문장으로 건너뛰어도 그 지점부터 곧바로 따라붙고,
 /// 대기열 크기가 일정하므로 글이 아무리 길어도 메모리 사용량은 변하지 않는다.
 class NarrationEngine extends ChangeNotifier {
-  NarrationEngine({this.prefetchAhead = 4});
+  NarrationEngine({this.maxReadyAhead = 60, this.warmupUnits = 1});
 
-  /// 재생 중인 문장보다 몇 개 앞까지 미리 만들어 둘지
-  final int prefetchAhead;
+  /// 아직 재생하지 않은 준비분을 최대 몇 개까지 쌓아둘지.
+  ///
+  /// 여유가 있으면 계속 앞서 만들어 두되, 저장공간이 무한정 늘지 않도록
+  /// 이 개수에 이르면 재생이 따라올 때까지 잠시 쉰다.
+  final int maxReadyAhead;
+
+  /// 재생을 시작하기 전에 먼저 만들어 둘 문장 수 (1 = 첫 문장이 준비되면 바로 시작)
+  final int warmupUnits;
 
   final AudioPlayer player = AudioPlayer();
 
@@ -55,6 +61,8 @@ class NarrationEngine extends ChangeNotifier {
   bool _running = false;
   bool _stalled = false;
   bool _pumping = false;
+  int _warmupTarget = 0; // 재생 시작 전에 준비해야 할 문장 수
+  bool _warmOk = true; // 재생을 시작해도 되는지
   String _status = '';
   String? _error;
 
@@ -152,6 +160,8 @@ class NarrationEngine extends ChangeNotifier {
     _playlistMap.clear();
     _running = true;
     _stalled = true;
+    _warmupTarget = sentences.length < warmupUnits ? sentences.length : warmupUnits;
+    _warmOk = false;
     _sessionDir = await _makeSessionDir(gen);
     _setStatus('첫 문장 만드는 중...');
 
@@ -193,13 +203,19 @@ class NarrationEngine extends ChangeNotifier {
     final i = index.clamp(0, _items.length - 1);
     final gen = _generation;
 
-    // 고른 지점부터 뒤쪽은 음성 파일이 없으면 다시 만들도록 되돌린다
+    // 고른 지점부터 뒤쪽 정리:
+    //  · 음성 파일이 남아 있으면 → 다시 재생할 수 있도록 '준비됨'으로
+    //  · 파일이 없으면 → 새로 만들도록 '대기'로
     for (var k = i; k < _items.length; k++) {
       final it = _items[k];
-      if (it.filePath == null &&
-          it.status != SentenceStatus.pending &&
-          it.status != SentenceStatus.synthesizing) {
-        it.status = SentenceStatus.pending;
+      if (it.status == SentenceStatus.synthesizing) continue;
+      if (it.filePath != null && File(it.filePath!).existsSync()) {
+        if (it.status != SentenceStatus.ready) it.status = SentenceStatus.ready;
+      } else {
+        it.filePath = null;
+        if (it.status != SentenceStatus.pending) {
+          it.status = SentenceStatus.pending;
+        }
       }
     }
     if (_currentIndex >= 0 && _currentIndex < _items.length) {
@@ -215,6 +231,7 @@ class NarrationEngine extends ChangeNotifier {
     _playlistMap.clear();
     _stalled = true;
     _error = null;
+    _warmOk = true; // 건너뛴 뒤에는 준비되는 대로 바로 재생
 
     try {
       await player.stop();
@@ -234,11 +251,14 @@ class NarrationEngine extends ChangeNotifier {
   }
 
   // ------------------------------------------------------------------ 워커
-  /// 지금 재생 위치를 기준으로, 아직 안 만든 문장 중 가장 가까운 것
+  /// 지금 재생 위치를 기준으로, 아직 안 만든 문장 중 가장 가까운 것.
+  ///
+  /// 여유가 있는 한 끝까지 계속 앞서 만든다. 다만 아직 듣지 않은 준비분이
+  /// [maxReadyAhead]를 넘으면 저장공간 보호를 위해 잠시 쉰다.
   int? _pickNext() {
+    if (readyCount >= maxReadyAhead) return null;
     final start = _currentIndex < 0 ? 0 : _currentIndex;
-    final end = (start + prefetchAhead + 1).clamp(0, _items.length);
-    for (var i = start; i < end; i++) {
+    for (var i = start; i < _items.length; i++) {
       if (_items[i].status == SentenceStatus.pending) return i;
     }
     return null;
@@ -258,19 +278,32 @@ class NarrationEngine extends ChangeNotifier {
       final item = _items[i];
       item.status = SentenceStatus.synthesizing;
       _synthesizingIndex = i;
+
       notifyListeners();
 
       try {
         final dir = _sessionDir;
         if (dir == null) return;
         final style = await _style(voice);
+
+        // 어디서 시간이 걸리는지 확인할 수 있도록 구간별로 측정한다
+        final t0 = DateTime.now();
         final result =
             await _tts!.call(item.text, lang, style, steps, speed: speed);
         if (gen != _generation) return;
+        final t1 = DateTime.now();
 
         final wav = (result['wav'] as List).cast<double>();
         final path = '${dir.path}/s${i}_${DateTime.now().millisecondsSinceEpoch}.wav';
         writeWavFile(path, wav, _tts!.sampleRate);
+        final t2 = DateTime.now();
+
+        final audioMs = wav.length * 1000 ~/ _tts!.sampleRate;
+        final inferMs = t1.difference(t0).inMilliseconds;
+        final writeMs = t2.difference(t1).inMilliseconds;
+        logger.i('#${i + 1} ${item.text.length}자 · 추론 ${inferMs}ms · '
+            '저장 ${writeMs}ms · 음성 ${audioMs}ms · '
+            '실시간대비 ${((inferMs + writeMs) / audioMs).toStringAsFixed(2)}배');
 
         // 만드는 사이에 사용자가 다른 곳으로 건너뛰었을 수 있다
         if (item.status == SentenceStatus.synthesizing) {
@@ -289,6 +322,45 @@ class NarrationEngine extends ChangeNotifier {
       }
 
       await _pump(gen);
+      await _checkWarmup(gen);
+    }
+  }
+
+  /// 준비된 문장이 목표치에 이르면 재생을 시작한다.
+  /// 더 만들 문장이 남지 않았다면(짧은 글) 목표치에 못 미쳐도 시작한다.
+  Future<void> _checkWarmup(int gen) async {
+    if (_warmOk || gen != _generation) return;
+
+    final start = _currentIndex < 0 ? 0 : _currentIndex;
+    final end = (start + _warmupTarget).clamp(0, _items.length);
+    var done = 0;
+    for (var i = start; i < end; i++) {
+      final s = _items[i].status;
+      if (s == SentenceStatus.ready ||
+          s == SentenceStatus.failed ||
+          s == SentenceStatus.playing ||
+          s == SentenceStatus.done) {
+        done++;
+      }
+    }
+
+    if (done >= _warmupTarget || _pickNext() == null) {
+      _warmOk = true;
+      await _startPlaybackIfReady(gen);
+    } else {
+      _setStatus('첫 문장 만드는 중... ($done/$_warmupTarget)');
+    }
+  }
+
+  Future<void> _startPlaybackIfReady(int gen) async {
+    if (!_warmOk || gen != _generation) return;
+    if (player.sequence.isEmpty || player.playing) return;
+    try {
+      _stalled = false;
+      await player.play();
+      _setStatus('재생 중');
+    } catch (e, st) {
+      logger.e('재생 시작 실패', error: e, stackTrace: st);
     }
   }
 
@@ -319,16 +391,15 @@ class NarrationEngine extends ChangeNotifier {
     try {
       if (player.sequence.isEmpty) {
         _playlistMap.add(item.index);
+        // 목록에는 넣되, 준비가 끝나기 전에는 재생을 시작하지 않는다
         await player.setAudioSources([source]);
         if (gen != _generation) return;
-        _stalled = false;
-        await player.play();
-        _setStatus('재생 중');
+        await _startPlaybackIfReady(gen);
       } else {
         _playlistMap.add(item.index);
         await player.addAudioSource(source);
         if (gen != _generation) return;
-        if (_stalled) {
+        if (_stalled && _warmOk) {
           // 앞 문장이 끝나 멈춰 있었다면 방금 넣은 문장부터 이어서 재생
           _stalled = false;
           await player.seek(Duration.zero, index: _playlistMap.length - 1);

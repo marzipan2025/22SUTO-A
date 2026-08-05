@@ -45,7 +45,7 @@ class _StatusIconState extends State<StatusIcon>
     if (_animated) {
       _controller ??= AnimationController(
         vsync: this,
-        duration: const Duration(milliseconds: 1800),
+        duration: const Duration(milliseconds: 2000),
       )..repeat();
     } else {
       _controller?.dispose();
@@ -61,13 +61,13 @@ class _StatusIconState extends State<StatusIcon>
 
   @override
   Widget build(BuildContext context) {
-    final painter = _StatusPainter(widget.status, 0);
     if (_controller == null) {
       return CustomPaint(
         size: Size.square(widget.size),
-        painter: painter,
+        painter: _StatusPainter(widget.status, 0),
       );
     }
+    // 합성 중일 때만 천천히 점멸한다 (그 외에는 다시 그리지 않는다)
     return AnimatedBuilder(
       animation: _controller!,
       builder: (_, __) => CustomPaint(
@@ -79,10 +79,12 @@ class _StatusIconState extends State<StatusIcon>
 }
 
 class _StatusPainter extends CustomPainter {
-  _StatusPainter(this.status, this.progress);
+  _StatusPainter(this.status, this.phase);
 
   final SentenceStatus status;
-  final double progress;
+
+  /// 점멸 위상 (0~1)
+  final double phase;
 
   @override
   void paint(Canvas canvas, Size size) {
@@ -96,14 +98,12 @@ class _StatusPainter extends CustomPainter {
 
       case SentenceStatus.synthesizing:
         _ring(canvas, c, r, const Color(0x20FFFFFF));
-        // 가운데에서 바깥으로 차오르는 파이 (0.85까지 채우고 잠시 머문 뒤 반복)
-        final t = (progress / 0.85).clamp(0.0, 1.0);
-        canvas.drawArc(
-          Rect.fromCircle(center: c, radius: r),
-          -math.pi / 2,
-          2 * math.pi * t,
-          true,
-          Paint()..color = kIconNeutral,
+        // 천천히 점멸하는 원 (계산 없이 크기·투명도만 바뀐다)
+        final wave = (1 - math.cos(phase * 2 * math.pi)) / 2; // 0 → 1 → 0
+        canvas.drawCircle(
+          c,
+          r * (0.66 + 0.34 * wave),
+          Paint()..color = kIconNeutral.withValues(alpha: 0.25 + 0.75 * wave),
         );
         break;
 
@@ -171,5 +171,5 @@ class _StatusPainter extends CustomPainter {
 
   @override
   bool shouldRepaint(_StatusPainter old) =>
-      old.status != status || old.progress != progress;
+      old.status != status || old.phase != phase;
 }

@@ -11,7 +11,9 @@ class Settings {
     this.voice = 'M1',
     this.lang = 'auto',
     this.speed = 1.05,
-    this.steps = 8,
+    // 공식 벤치마크는 2단계 기준. 8단계는 가장 무거운 모델을 4배 더 돌린다.
+    // 폰에서는 4단계 정도가 음질과 속도의 균형점.
+    this.steps = 4,
   });
 
   String voice;
@@ -38,7 +40,7 @@ class Settings {
       voice: j['voice'] is String ? j['voice'] as String : 'M1',
       lang: j['lang'] is String ? j['lang'] as String : 'auto',
       speed: (j['speed'] is num) ? (j['speed'] as num).toDouble() : 1.05,
-      steps: (j['steps'] is num) ? (j['steps'] as num).toInt() : 8,
+      steps: (j['steps'] is num) ? (j['steps'] as num).toInt() : 4,
     );
     s.clamp();
     return s;

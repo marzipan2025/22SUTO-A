@@ -380,37 +380,58 @@ class TextToSpeech {
     final totalStepTensor =
         await _scalarToTensor(List.filled(bsz, totalStep.toDouble()), [bsz]);
 
+    // 잠재값을 평탄한 Float32List로 한 번만 만들어 두고 반복 사용한다.
+    //
+    // 예전에는 단계마다 중첩 리스트(List<List<List<double>>>)를 만들고 풀기를
+    // 반복했는데, 원소 하나하나가 박싱되는 Dart 리스트라 폰에서 이 변환 비용이
+    // 모델 계산보다 훨씬 컸다. 평탄한 typed 배열을 쓰면 그 과정이 사라진다.
+    final latentFlat = Float32List.fromList(_flattenList<double>(noisyLatent));
+
     // Denoising loop
+    final loopStart = DateTime.now();
     for (var step = 0; step < totalStep; step++) {
+      final latentTensor = await OrtValue.fromList(latentFlat, latentShape);
+      final stepTensor =
+          await _scalarToTensor(List.filled(bsz, step.toDouble()), [bsz]);
+
       final result = await vectorEstOrt.run({
-        'noisy_latent': await _toTensor(noisyLatent, latentShape),
+        'noisy_latent': latentTensor,
         'text_emb': textEncResult.values.first,
         'style_ttl': style.ttl,
         'text_mask': textMaskTensor,
         'latent_mask': latentMaskTensor,
         'total_step': totalStepTensor,
-        'current_step':
-            await _scalarToTensor(List.filled(bsz, step.toDouble()), [bsz]),
+        'current_step': stepTensor,
       });
 
-      final denoisedRaw = await result.values.first.asList();
-      final denoised = denoisedRaw is List<double>
-          ? denoisedRaw
-          : _safeCast<double>(denoisedRaw);
-      var idx = 0;
-      for (var b = 0; b < noisyLatent.length; b++) {
-        for (var d = 0; d < noisyLatent[b].length; d++) {
-          for (var t = 0; t < noisyLatent[b][d].length; t++) {
-            noisyLatent[b][d][t] = denoised[idx++];
-          }
-        }
+      // 중첩 구조로 되돌리지 않고 평탄한 채로 받아 그대로 덮어쓴다
+      final denoised = await result.values.first.asFlattenedList();
+      latentFlat.setAll(0, denoised.cast<double>());
+
+      // 네이티브 메모리를 바로 돌려준다 (단계마다 쌓이면 GC 부담이 커진다)
+      await latentTensor.dispose();
+      await stepTensor.dispose();
+      for (final v in result.values) {
+        await v.dispose();
       }
     }
 
-    final vocoderResult = await vocoderOrt
-        .run({'latent': await _toTensor(noisyLatent, latentShape)});
-    final wavRaw = await vocoderResult.values.first.asList();
-    final wav = wavRaw is List<double> ? wavRaw : _safeCast<double>(wavRaw);
+    final loopMs = DateTime.now().difference(loopStart).inMilliseconds;
+
+    final vocStart = DateTime.now();
+    final finalLatent = await OrtValue.fromList(latentFlat, latentShape);
+    final vocoderResult = await vocoderOrt.run({'latent': finalLatent});
+    final wavRaw = await vocoderResult.values.first.asFlattenedList();
+    final wav = List<double>.from(wavRaw.cast<double>());
+    final vocMs = DateTime.now().difference(vocStart).inMilliseconds;
+
+    logger.i('  · 잠재값 ${latentFlat.length}개 · 확산 $totalStep단계 ${loopMs}ms '
+        '(단계당 ${loopMs ~/ totalStep}ms) · 보코더 ${vocMs}ms');
+
+    await finalLatent.dispose();
+    for (final v in vocoderResult.values) {
+      await v.dispose();
+    }
 
     return {'wav': wav, 'duration': scaledDur};
   }
@@ -611,6 +632,34 @@ Future<String> copyModelToFile(String path) async {
   return modelPath;
 }
 
+/// 이 기기에서 쓸 수 있는 가장 빠른 실행 설정을 고른다.
+Future<OrtSessionOptions> _bestSessionOptions(OnnxRuntime ort) async {
+  var available = <OrtProvider>[];
+  try {
+    available = await ort.getAvailableProviders();
+  } catch (e) {
+    logger.w('실행 장치 목록을 읽지 못함: $e');
+  }
+
+  // 성능 코어 위주로. 너무 많이 쓰면 오히려 느려지고 발열이 심해진다.
+  final threads = Platform.numberOfProcessors.clamp(2, 6);
+
+  final providers = <OrtProvider>[];
+  if (available.contains(OrtProvider.XNNPACK)) {
+    providers.add(OrtProvider.XNNPACK); // ARM CPU에 최적화된 가속기
+  }
+  providers.add(OrtProvider.CPU); // 위가 안 되면 여기로 되돌아간다
+
+  logger.i('실행 장치: $providers · 스레드 $threads개 (사용 가능: $available)');
+
+  return OrtSessionOptions(
+    intraOpNumThreads: threads,
+    interOpNumThreads: 1,
+    providers: providers,
+    useArena: true,
+  );
+}
+
 Future<Map<String, OrtSession>> _loadOnnxAll(String dir) async {
   final ort = OnnxRuntime();
   final models = [
@@ -620,10 +669,20 @@ Future<Map<String, OrtSession>> _loadOnnxAll(String dir) async {
     'vocoder'
   ];
 
+  // 기본값은 단일 스레드 CPU라 폰에서 느리다.
+  // 코어 수만큼 병렬로 돌리고, 쓸 수 있으면 가속기(XNNPACK/NNAPI)를 얹는다.
+  final options = await _bestSessionOptions(ort);
+
   final sessions = await Future.wait(models.map((name) async {
     final path = await copyModelToFile('$dir/$name.onnx');
     logger.d('Loading $name.onnx');
-    return ort.createSessionFromAsset(path);
+    try {
+      return await ort.createSessionFromAsset(path, options: options);
+    } catch (e) {
+      // 가속기를 못 쓰는 기기라면 기본 설정으로 되돌린다
+      logger.w('가속 설정 실패 → 기본 설정으로 재시도: $e');
+      return await ort.createSessionFromAsset(path);
+    }
   }));
 
   return {

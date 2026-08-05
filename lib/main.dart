@@ -13,6 +13,7 @@ import 'package:suto_a/status_icon.dart';
 const _shareMethod = MethodChannel('suto_a/share');
 const _shareEvents = EventChannel('suto_a/share_events');
 const _playback = MethodChannel('suto_a/playback');
+const _fileMethod = MethodChannel('suto_a/file');
 
 void main() => runApp(const SutoApp());
 
@@ -52,20 +53,29 @@ class TTSPage extends StatefulWidget {
 
 class _TTSPageState extends State<TTSPage> {
   final _textController = TextEditingController();
-  final _engine = NarrationEngine(prefetchAhead: 4);
+  final _engine = NarrationEngine();
   final _listController = ScrollController();
 
   StreamSubscription? _intentSub;
   Timer? _saveTimer;
   Timer? _userScrollTimer;
 
-  static const _itemExtent = 76.0;
+  // 문장 전체를 줄임 없이 보여주므로 항목 높이가 제각각이다.
+  // 정확한 자동 스크롤을 위해 각 항목의 높이를 직접 계산해 캐시한다.
+  static const _bodyStyle = TextStyle(fontSize: 13, height: 1.4);
+  static const _itemVerticalPadding = 16.0; // 위아래 안쪽 여백
+  static const _itemGap = 8.0; // 항목 사이 간격
+  static const _itemMinHeight = 44.0;
+  final Map<int, double> _extentCache = {};
+  double _cachedWidth = 0;
+
   int _lastScrolledIndex = -1;
   bool _userScrolling = false;
 
   Settings _settings = Settings();
   bool _ready = false;
   bool _showList = false; // 입력 화면 ↔ 진행 화면
+  bool _pickingFile = false;
   String? _menuHint;
 
   static const _voiceNames = {
@@ -146,13 +156,51 @@ class _TTSPageState extends State<TTSPage> {
     return null;
   }
 
+  // ---- 항목 높이 계산 ----
+  /// 글 전체가 몇 줄로 그려지는지 실제로 재서 항목 높이를 구한다.
+  double _extentFor(int index, double listWidth) {
+    if (listWidth != _cachedWidth) {
+      _extentCache.clear();
+      _cachedWidth = listWidth;
+    }
+    final cached = _extentCache[index];
+    if (cached != null) return cached;
+
+    final items = _engine.items;
+    if (index < 0 || index >= items.length) return _itemMinHeight + _itemGap;
+
+    // 항목 안쪽 구성: 좌우 여백 12+12, 아이콘 20, 간격 10, 테두리 2
+    final textWidth = (listWidth - 12 - 12 - 20 - 10 - 2).clamp(40.0, listWidth);
+    final painter = TextPainter(
+      text: TextSpan(text: items[index].text, style: _bodyStyle),
+      textDirection: TextDirection.ltr,
+    )..layout(maxWidth: textWidth);
+
+    final h = (painter.height + _itemVerticalPadding + 2)
+            .clamp(_itemMinHeight, double.infinity) +
+        _itemGap;
+    _extentCache[index] = h;
+    return h;
+  }
+
+  double _offsetOf(int index, double listWidth) {
+    var sum = 0.0;
+    for (var i = 0; i < index; i++) {
+      sum += _extentFor(i, listWidth);
+    }
+    return sum;
+  }
+
   // ---- 스크롤 ----
   void _autoScroll() {
     if (!_showList || _userScrolling || !_listController.hasClients) return;
     final i = _engine.currentIndex;
     if (i < 0 || i == _lastScrolledIndex) return;
+    if (_cachedWidth <= 0) return;
     _lastScrolledIndex = i;
-    final target = (i * _itemExtent) - _itemExtent;
+
+    // 현재 문장이 화면 위쪽에 오도록 (앞 한 항목만큼 여유를 둔다)
+    final target = _offsetOf(i, _cachedWidth) - _extentFor(i, _cachedWidth);
     _listController.animateTo(
       target.clamp(0.0, _listController.position.maxScrollExtent),
       duration: const Duration(milliseconds: 350),
@@ -193,6 +241,38 @@ class _TTSPageState extends State<TTSPage> {
     if (t.isEmpty) return;
     _textController.text = t;
     if (_ready && !_engine.isRunning) _start();
+  }
+
+  // ---- 문서 불러오기 (txt·docx·html 등) ----
+  Future<void> _pickFile() async {
+    if (_pickingFile) return;
+    setState(() => _pickingFile = true);
+    try {
+      final raw = await _fileMethod.invokeMethod<Map<Object?, Object?>>('pickDocument');
+      final map = (raw ?? const <Object?, Object?>{})
+          .map((k, v) => MapEntry(k.toString(), v));
+      if (map['cancelled'] == true) return;
+      if (map['ok'] != true) {
+        _showSnack(map['error']?.toString() ?? '파일을 열 수 없어요.');
+        return;
+      }
+      final text = map['text']?.toString() ?? '';
+      final name = map['name']?.toString() ?? '문서';
+      final chars = map['chars'] ?? text.length;
+      final note = map['note']?.toString() ?? '';
+      setState(() => _textController.text = text);
+      _showSnack('$name — $chars자를 가져왔어요.${note.isNotEmpty ? ' $note' : ''}');
+    } catch (e) {
+      logger.e('file pick error', error: e);
+      _showSnack('파일을 열 수 없어요: $e');
+    } finally {
+      if (mounted) setState(() => _pickingFile = false);
+    }
+  }
+
+  void _showSnack(String message) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(message)));
   }
 
   // ---- 재생 제어 ----
@@ -400,6 +480,26 @@ class _TTSPageState extends State<TTSPage> {
               style: const TextStyle(fontSize: 12, color: Colors.white38),
             ),
           ),
+        // 문서 불러오기는 입력 화면에서만 필요하다
+        if (!_showList)
+          Padding(
+            padding: const EdgeInsets.only(right: 8),
+            child: IconButton(
+              onPressed: _pickingFile ? null : _pickFile,
+              icon: _pickingFile
+                  ? const SizedBox(
+                      width: 18,
+                      height: 18,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    )
+                  : const Icon(Icons.description_outlined),
+              tooltip: '문서 불러오기',
+              style: IconButton.styleFrom(
+                backgroundColor: kCard,
+                side: const BorderSide(color: kLine),
+              ),
+            ),
+          ),
         // 설정 메뉴는 입력 화면과 진행 화면 모두에서 열 수 있다
         IconButton(
           onPressed: _openSettings,
@@ -484,12 +584,13 @@ class _TTSPageState extends State<TTSPage> {
               const Text('대기열',
                   style: TextStyle(fontSize: 11, color: Colors.white38)),
               const SizedBox(width: 8),
-              ...List.generate(_engine.prefetchAhead + 1, (i) {
+              // 여유가 있는 한 계속 앞서 만들므로 10칸까지 표시한다
+              ...List.generate(10, (i) {
                 final filled = i < _engine.readyCount;
                 return Container(
-                  width: 18,
+                  width: 12,
                   height: 6,
-                  margin: const EdgeInsets.only(right: 4),
+                  margin: const EdgeInsets.only(right: 3),
                   decoration: BoxDecoration(
                     color: filled ? kSynth : kLine,
                     borderRadius: BorderRadius.circular(3),
@@ -560,18 +661,26 @@ class _TTSPageState extends State<TTSPage> {
 
   Widget _sentenceList() {
     final items = _engine.items;
-    return NotificationListener<UserScrollNotification>(
-      onNotification: _onScrollNotification,
-      child: ListView.builder(
-        controller: _listController,
-        itemCount: items.length,
-        itemExtent: _itemExtent,
-        itemBuilder: (context, i) {
+    return LayoutBuilder(builder: (context, constraints) {
+      // 화면 너비가 바뀌면 높이 계산을 다시 한다
+      if (constraints.maxWidth != _cachedWidth) {
+        _extentCache.clear();
+        _cachedWidth = constraints.maxWidth;
+      }
+      return NotificationListener<UserScrollNotification>(
+        onNotification: _onScrollNotification,
+        child: ListView.builder(
+          controller: _listController,
+          itemCount: items.length,
+          // 문장마다 높이가 다르므로 각각 계산해 넘긴다 (스크롤이 정확해진다)
+          itemExtentBuilder: (index, _) =>
+              _extentFor(index, constraints.maxWidth),
+          itemBuilder: (context, i) {
           final it = items[i];
           final isCurrent = it.status == SentenceStatus.playing;
 
           return Padding(
-            padding: const EdgeInsets.only(bottom: 8),
+            padding: const EdgeInsets.only(bottom: _itemGap),
             child: InkWell(
               borderRadius: BorderRadius.circular(12),
               // 문장을 누르면 그 지점부터 읽고, 뒤 문장들을 이어서 합성한다
@@ -596,12 +705,8 @@ class _TTSPageState extends State<TTSPage> {
                     const SizedBox(width: 10),
                     Expanded(
                       child: Text(
-                        it.text,
-                        maxLines: 2,
-                        overflow: TextOverflow.ellipsis,
-                        style: TextStyle(
-                          fontSize: 13,
-                          height: 1.4,
+                        it.text, // 줄임 없이 전체를 보여준다
+                        style: _bodyStyle.copyWith(
                           color: it.status == SentenceStatus.done
                               ? Colors.white30
                               : Colors.white70,
@@ -614,8 +719,9 @@ class _TTSPageState extends State<TTSPage> {
             ),
           );
         },
-      ),
-    );
+        ),
+      );
+    });
   }
 
   // ---- 하단 버튼 ----

@@ -277,6 +277,12 @@ class _TTSPageState extends State<TTSPage> {
 
   // ---- 재생 제어 ----
   Future<void> _start() async {
+    // 뒤로가기로 나왔다가 다시 눌렀을 때는 이미 재생 중이므로 그냥 화면만 보여준다
+    if (_engine.isRunning) {
+      if (mounted) setState(() => _showList = true);
+      return;
+    }
+
     final text = _textController.text.trim();
     if (!_ready || text.isEmpty) return;
 
@@ -299,9 +305,12 @@ class _TTSPageState extends State<TTSPage> {
     if (mounted) setState(() => _showList = false);
   }
 
-  Future<void> _back() async {
-    await _stop();
-    if (mounted) setState(() => _menuHint = null);
+  /// 뒤로가기는 입력 화면으로 돌아가기만 할 뿐, 재생 중인 소리는 멈추지 않는다.
+  void _back() {
+    if (mounted) setState(() {
+      _showList = false;
+      _menuHint = null;
+    });
   }
 
   Future<void> _togglePause() async {
@@ -382,7 +391,7 @@ class _TTSPageState extends State<TTSPage> {
                     _settings.speed, 0.7, 2.0,
                     (v) => update(() => _settings.speed = v)),
                 _slider('품질', '${_settings.steps}',
-                    _settings.steps.toDouble(), 5, 12,
+                    _settings.steps.toDouble(), 2, 12,
                     (v) => update(() => _settings.steps = v.round())),
                 const SizedBox(height: 8),
                 Text(
@@ -433,21 +442,29 @@ class _TTSPageState extends State<TTSPage> {
     );
   }
 
+  /// 아이콘 없이 글자만 담은 작은 버튼 (헤더에서 공용으로 쓴다)
+  Widget _chipButton({required String label, required VoidCallback? onPressed}) {
+    return OutlinedButton(
+      onPressed: onPressed,
+      style: OutlinedButton.styleFrom(
+        backgroundColor: kCard,
+        side: const BorderSide(color: kLine),
+        foregroundColor: Colors.white70,
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+        shape:
+            RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+      ),
+      child: Text(label, style: const TextStyle(fontSize: 13)),
+    );
+  }
+
   Widget _header() {
     return Row(
       crossAxisAlignment: CrossAxisAlignment.center,
       children: [
-        // 진행 화면에서는 로고 자리에 뒤로 버튼이 나타난다
+        // 진행 화면에서는 로고 자리에 뒤로 버튼이 나타난다 (눌러도 재생은 멈추지 않는다)
         if (_showList)
-          IconButton(
-            onPressed: _back,
-            icon: const Icon(Icons.arrow_back),
-            tooltip: '입력 화면으로 돌아가기',
-            style: IconButton.styleFrom(
-              backgroundColor: kCard,
-              side: const BorderSide(color: kLine),
-            ),
-          )
+          _chipButton(label: '뒤로', onPressed: _back)
         else
           Column(
             crossAxisAlignment: CrossAxisAlignment.start,
@@ -484,32 +501,13 @@ class _TTSPageState extends State<TTSPage> {
         if (!_showList)
           Padding(
             padding: const EdgeInsets.only(right: 8),
-            child: IconButton(
+            child: _chipButton(
+              label: _pickingFile ? '여는 중' : '문서',
               onPressed: _pickingFile ? null : _pickFile,
-              icon: _pickingFile
-                  ? const SizedBox(
-                      width: 18,
-                      height: 18,
-                      child: CircularProgressIndicator(strokeWidth: 2),
-                    )
-                  : const Icon(Icons.description_outlined),
-              tooltip: '문서 불러오기',
-              style: IconButton.styleFrom(
-                backgroundColor: kCard,
-                side: const BorderSide(color: kLine),
-              ),
             ),
           ),
         // 설정 메뉴는 입력 화면과 진행 화면 모두에서 열 수 있다
-        IconButton(
-          onPressed: _openSettings,
-          icon: const Icon(Icons.menu),
-          tooltip: '설정',
-          style: IconButton.styleFrom(
-            backgroundColor: kCard,
-            side: const BorderSide(color: kLine),
-          ),
-        ),
+        _chipButton(label: '설정', onPressed: _openSettings),
       ],
     );
   }
@@ -548,11 +546,10 @@ class _TTSPageState extends State<TTSPage> {
     );
   }
 
+  // 합성중 번호 · 재생중 번호 · 대기열 숫자만 보여준다 (문장 미리보기·막대는 뺐다)
   Widget _trackBoard() {
-    final items = _engine.items;
     final synthIdx = _engine.synthesizingIndex;
     final playIdx = _engine.currentIndex;
-    String textAt(int i) => (i >= 0 && i < items.length) ? items[i].text : '대기 중';
 
     return Container(
       padding: const EdgeInsets.all(12),
@@ -561,47 +558,31 @@ class _TTSPageState extends State<TTSPage> {
         borderRadius: BorderRadius.circular(14),
         border: Border.all(color: kLine),
       ),
-      child: Column(
+      child: Row(
         children: [
           _trackRow(
             label: '합성',
             color: kSynth,
             active: synthIdx >= 0,
             index: synthIdx,
-            text: textAt(synthIdx),
           ),
-          const SizedBox(height: 8),
+          const SizedBox(width: 20),
           _trackRow(
             label: '재생',
             color: kPlay,
             active: _engine.isPlaying && !_engine.isStalled,
             index: playIdx,
-            text: textAt(playIdx),
           ),
-          const SizedBox(height: 10),
-          Row(
-            children: [
-              const Text('대기열',
-                  style: TextStyle(fontSize: 11, color: Colors.white38)),
-              const SizedBox(width: 8),
-              // 여유가 있는 한 계속 앞서 만들므로 10칸까지 표시한다
-              ...List.generate(10, (i) {
-                final filled = i < _engine.readyCount;
-                return Container(
-                  width: 12,
-                  height: 6,
-                  margin: const EdgeInsets.only(right: 3),
-                  decoration: BoxDecoration(
-                    color: filled ? kSynth : kLine,
-                    borderRadius: BorderRadius.circular(3),
-                  ),
-                );
-              }),
-              const Spacer(),
-              Text('${_engine.readyCount}개 준비됨',
-                  style: const TextStyle(fontSize: 11, color: Colors.white38)),
-            ],
-          ),
+          const Spacer(),
+          const Text('대기열',
+              style: TextStyle(fontSize: 11, color: Colors.white38)),
+          const SizedBox(width: 6),
+          Text('${_engine.readyCount}개',
+              style: const TextStyle(
+                fontSize: 13,
+                fontWeight: FontWeight.bold,
+                color: kSynth,
+              )),
         ],
       ),
     );
@@ -612,47 +593,25 @@ class _TTSPageState extends State<TTSPage> {
     required Color color,
     required bool active,
     required int index,
-    required String text,
   }) {
     return Row(
+      mainAxisSize: MainAxisSize.min,
       children: [
-        AnimatedContainer(
-          duration: const Duration(milliseconds: 250),
-          width: 44,
-          padding: const EdgeInsets.symmetric(vertical: 4),
-          decoration: BoxDecoration(
-            color: active ? color.withValues(alpha: 0.18) : Colors.transparent,
-            border: Border.all(color: active ? color : kLine),
-            borderRadius: BorderRadius.circular(8),
-          ),
-          child: Text(
-            label,
-            textAlign: TextAlign.center,
-            style: TextStyle(
-              fontSize: 11,
-              fontWeight: FontWeight.bold,
-              color: active ? color : Colors.white30,
-            ),
+        Text(
+          label,
+          style: TextStyle(
+            fontSize: 11,
+            fontWeight: FontWeight.bold,
+            color: active ? color : Colors.white30,
           ),
         ),
-        const SizedBox(width: 8),
-        SizedBox(
-          width: 32,
-          child: Text(
-            index >= 0 ? '#${index + 1}' : '',
-            style:
-                TextStyle(fontSize: 11, color: active ? color : Colors.white24),
-          ),
-        ),
-        Expanded(
-          child: Text(
-            text,
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-            style: TextStyle(
-              fontSize: 12.5,
-              color: active ? Colors.white70 : Colors.white24,
-            ),
+        const SizedBox(width: 6),
+        Text(
+          index >= 0 ? '#${index + 1}' : '-',
+          style: TextStyle(
+            fontSize: 13,
+            fontWeight: FontWeight.bold,
+            color: active ? color : Colors.white24,
           ),
         ),
       ],
@@ -733,7 +692,7 @@ class _TTSPageState extends State<TTSPage> {
           style: FilledButton.styleFrom(backgroundColor: kAccent),
           onPressed: _ready ? _start : null,
           child: Text(
-            _ready ? '▶ 읽어주기' : '준비 중...',
+            _ready ? '읽어주기' : '준비 중...',
             style: const TextStyle(fontSize: 17, fontWeight: FontWeight.bold),
           ),
         ),
@@ -743,15 +702,6 @@ class _TTSPageState extends State<TTSPage> {
     return Row(
       children: [
         Expanded(
-          child: OutlinedButton(
-            style: OutlinedButton.styleFrom(
-                padding: const EdgeInsets.symmetric(vertical: 14)),
-            onPressed: _engine.skipPrevious,
-            child: const Text('◀◀ 이전'),
-          ),
-        ),
-        const SizedBox(width: 8),
-        Expanded(
           flex: 2,
           child: FilledButton(
             style: FilledButton.styleFrom(
@@ -760,30 +710,21 @@ class _TTSPageState extends State<TTSPage> {
             ),
             onPressed: _togglePause,
             child: Text(
-              _engine.isPlaying ? '❙❙ 일시정지' : '▶ 이어듣기',
+              _engine.isPlaying ? '일시정지' : '이어듣기',
               style: const TextStyle(fontSize: 15, fontWeight: FontWeight.bold),
             ),
           ),
         ),
         const SizedBox(width: 8),
-        Expanded(
-          child: OutlinedButton(
-            style: OutlinedButton.styleFrom(
-                padding: const EdgeInsets.symmetric(vertical: 14)),
-            onPressed: _engine.skipNext,
-            child: const Text('다음 ▶▶'),
-          ),
-        ),
-        const SizedBox(width: 8),
         SizedBox(
-          width: 50,
+          width: 70,
           child: OutlinedButton(
             style: OutlinedButton.styleFrom(
               padding: const EdgeInsets.symmetric(vertical: 14),
               foregroundColor: kAccent,
             ),
             onPressed: _stop,
-            child: const Text('■'),
+            child: const Text('정지'),
           ),
         ),
       ],

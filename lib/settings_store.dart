@@ -11,9 +11,10 @@ class Settings {
     this.voice = 'M1',
     this.lang = 'auto',
     this.speed = 1.05,
-    // 공식 벤치마크는 2단계 기준. 8단계는 가장 무거운 모델을 4배 더 돌린다.
-    // 폰에서는 4단계 정도가 음질과 속도의 균형점.
-    this.steps = 4,
+    // 공식 문서의 production 기본값은 5단계("balanced"). 2단계는 "미리보기용"이라고
+    // 문서에 적혀 있고, 실제로 폰에서 들어봐도 로봇처럼 뭉개져서 못 쓸 정도였다.
+    // 8단계는 5단계보다 확산 계산이 더 걸리는 데 비해 체감 이득은 크지 않았다.
+    this.steps = 5,
   });
 
   String voice;
@@ -29,7 +30,8 @@ class Settings {
     if (lang.isEmpty) lang = 'auto';
     if (speed.isNaN) speed = 1.05;
     speed = speed.clamp(0.7, 2.0);
-    steps = steps.clamp(5, 12);
+    // 하한은 2까지 열어둔다(실험해볼 수 있게) — 다만 기본값은 5. 2는 실사용 품질이 아니다.
+    steps = steps.clamp(2, 12);
   }
 
   Map<String, dynamic> toJson() =>
@@ -40,7 +42,7 @@ class Settings {
       voice: j['voice'] is String ? j['voice'] as String : 'M1',
       lang: j['lang'] is String ? j['lang'] as String : 'auto',
       speed: (j['speed'] is num) ? (j['speed'] as num).toDouble() : 1.05,
-      steps: (j['steps'] is num) ? (j['steps'] as num).toInt() : 4,
+      steps: (j['steps'] is num) ? (j['steps'] as num).toInt() : 5,
     );
     s.clamp();
     return s;

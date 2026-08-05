@@ -114,7 +114,7 @@ class NarrationEngine extends ChangeNotifier {
   int? setParams({String? voice, String? lang, double? speed, int? steps}) {
     if (voice != null) _voice = voice;
     if (speed != null) _speed = speed.clamp(0.7, 2.0);
-    if (steps != null) _steps = steps.clamp(5, 12);
+    if (steps != null) _steps = steps.clamp(2, 12); // 공식 벤치마크가 2단계 기준
     if (lang != null) {
       _langChoice = lang;
       if (lang != 'auto') _lang = lang;

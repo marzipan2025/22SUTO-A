@@ -340,6 +340,9 @@ class TextToSpeech {
     final textMaskShape = [bsz, 1, textMask[0][0].length];
     final textMaskTensor = await _toTensor(textMask, textMaskShape);
 
+    // 확산 루프 앞의 준비 단계(길이 예측 + 텍스트 인코딩)가 전체 시간에서
+    // 차지하는 비중을 직접 재본다 — 유닛을 합쳐서 얻을 수 있는 이득의 상한이다.
+    final prepStart = DateTime.now();
     final dpResult = await dpOrt.run({
       'text_ids': await _intToTensor(textIds, textIdsShape),
       'style_dp': style.dp,
@@ -353,6 +356,7 @@ class TextToSpeech {
       'style_ttl': style.ttl,
       'text_mask': textMaskTensor,
     });
+    final prepMs = DateTime.now().difference(prepStart).inMilliseconds;
 
     final latentData = _sampleNoisyLatent(scaledDur);
     final noisyLatentRaw = latentData['noisyLatent'];
@@ -425,7 +429,7 @@ class TextToSpeech {
     final wav = List<double>.from(wavRaw.cast<double>());
     final vocMs = DateTime.now().difference(vocStart).inMilliseconds;
 
-    logger.i('  · 잠재값 ${latentFlat.length}개 · 확산 $totalStep단계 ${loopMs}ms '
+    logger.i('  · 잠재값 ${latentFlat.length}개 · 준비 ${prepMs}ms · 확산 $totalStep단계 ${loopMs}ms '
         '(단계당 ${loopMs ~/ totalStep}ms) · 보코더 ${vocMs}ms');
 
     await finalLatent.dispose();

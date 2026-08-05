@@ -2,21 +2,26 @@ import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart' show ScrollDirection;
 import 'package:flutter/services.dart';
-import 'package:just_audio/just_audio.dart';
-import 'package:path_provider/path_provider.dart';
 import 'package:suto_a/helper.dart';
+import 'package:suto_a/narration_engine.dart';
+import 'package:suto_a/settings_store.dart';
+import 'package:suto_a/status_icon.dart';
 
-/// 네이티브(MainActivity.kt)에서 공유된 글을 받아오는 통로
+/// 네이티브(MainActivity.kt)와 주고받는 통로
 const _shareMethod = MethodChannel('suto_a/share');
 const _shareEvents = EventChannel('suto_a/share_events');
+const _playback = MethodChannel('suto_a/playback');
 
 void main() => runApp(const SutoApp());
 
 const kBg = Color(0xFF101418);
 const kCard = Color(0xFF1A2129);
 const kLine = Color(0xFF2A3441);
-const kAccent = Color(0xFFE53935); // 아이콘과 맞춘 레드
+const kAccent = Color(0xFFE53935); // 아이콘과 맞춘 레드 (버튼)
+const kSynth = Color(0xFFB9C4CF); // 합성 트랙 (중립)
+const kPlay = Color(0xFF4DA3FF); // 재생 트랙 (파랑 = 지금 재생 중)
 
 class SutoApp extends StatelessWidget {
   const SutoApp({super.key});
@@ -29,10 +34,8 @@ class SutoApp extends StatelessWidget {
       theme: ThemeData(
         brightness: Brightness.dark,
         scaffoldBackgroundColor: kBg,
-        colorScheme: ColorScheme.fromSeed(
-          seedColor: kAccent,
-          brightness: Brightness.dark,
-        ),
+        colorScheme:
+            ColorScheme.fromSeed(seedColor: kAccent, brightness: Brightness.dark),
         useMaterial3: true,
       ),
       home: const TTSPage(),
@@ -49,21 +52,23 @@ class TTSPage extends StatefulWidget {
 
 class _TTSPageState extends State<TTSPage> {
   final _textController = TextEditingController();
-  final _audioPlayer = AudioPlayer();
+  final _engine = NarrationEngine(prefetchAhead: 4);
+  final _listController = ScrollController();
 
-  TextToSpeech? _tts;
-  final Map<String, Style> _styleCache = {};
   StreamSubscription? _intentSub;
+  Timer? _saveTimer;
+  Timer? _userScrollTimer;
 
-  String _voice = 'M1';
-  String _lang = 'na';
-  int _steps = 8;
-  double _speed = 1.05;
-  bool _busy = false;
+  static const _itemExtent = 76.0;
+  int _lastScrolledIndex = -1;
+  bool _userScrolling = false;
+
+  Settings _settings = Settings();
   bool _ready = false;
-  String _status = '음성 엔진 준비 중...';
+  bool _showList = false; // 입력 화면 ↔ 진행 화면
+  String? _menuHint;
 
-  static const _voices = {
+  static const _voiceNames = {
     'M1': '남성 1', 'M2': '남성 2', 'M3': '남성 3', 'M4': '남성 4', 'M5': '남성 5',
     'F1': '여성 1', 'F2': '여성 2', 'F3': '여성 3', 'F4': '여성 4', 'F5': '여성 5',
   };
@@ -71,227 +76,276 @@ class _TTSPageState extends State<TTSPage> {
   @override
   void initState() {
     super.initState();
-    _loadModels();
+    _engine.addListener(_onEngineChanged);
+    _engine.onSentenceChanged = _onSentenceChanged;
+    _playback.setMethodCallHandler(_onPlaybackCall);
+    _boot();
     _initShareIntent();
   }
 
   @override
   void dispose() {
     _intentSub?.cancel();
-    _audioPlayer.dispose();
+    _saveTimer?.cancel();
+    _userScrollTimer?.cancel();
+    _engine.removeListener(_onEngineChanged);
+    _engine.dispose();
     _textController.dispose();
+    _listController.dispose();
     super.dispose();
   }
 
-  // ---- 공유 수신 (구글드라이브/문서 앱 등에서 "공유 → 22SUTO-A") ----
+  /// 지난번 설정을 불러온 뒤 모델을 준비한다
+  Future<void> _boot() async {
+    _settings = await loadSettings();
+    _applySettingsToEngine();
+    if (mounted) setState(() {});
+    try {
+      await _engine.loadModels();
+      if (mounted) setState(() => _ready = true);
+    } catch (e, st) {
+      logger.e('모델 로드 실패', error: e, stackTrace: st);
+      if (mounted) setState(() {});
+    }
+  }
+
+  void _applySettingsToEngine() {
+    final at = _engine.setParams(
+      voice: _settings.voice,
+      lang: _settings.lang,
+      speed: _settings.speed,
+      steps: _settings.steps,
+    );
+    if (_engine.isRunning && at != null) {
+      _menuHint = '바뀐 설정은 $at번째 문장부터 적용됩니다.';
+    }
+  }
+
+  /// 슬라이더를 움직이는 동안 파일을 계속 쓰지 않도록 잠시 모아서 저장
+  void _scheduleSave() {
+    _saveTimer?.cancel();
+    _saveTimer = Timer(const Duration(milliseconds: 500), () {
+      saveSettings(_settings);
+    });
+  }
+
+  void _onEngineChanged() {
+    if (mounted) setState(() {});
+    _autoScroll();
+  }
+
+  void _onSentenceChanged(SentenceItem item) {
+    _playback.invokeMethod('update', {
+      'text': item.text,
+      'progress': '${item.index + 1}/${_engine.total}',
+    }).catchError((_) => null);
+  }
+
+  Future<dynamic> _onPlaybackCall(MethodCall call) async {
+    if (call.method == 'stopFromNotification') await _stop();
+    return null;
+  }
+
+  // ---- 스크롤 ----
+  void _autoScroll() {
+    if (!_showList || _userScrolling || !_listController.hasClients) return;
+    final i = _engine.currentIndex;
+    if (i < 0 || i == _lastScrolledIndex) return;
+    _lastScrolledIndex = i;
+    final target = (i * _itemExtent) - _itemExtent;
+    _listController.animateTo(
+      target.clamp(0.0, _listController.position.maxScrollExtent),
+      duration: const Duration(milliseconds: 350),
+      curve: Curves.easeOut,
+    );
+  }
+
+  bool _onScrollNotification(UserScrollNotification n) {
+    if (n.direction != ScrollDirection.idle) {
+      _userScrolling = true;
+      _userScrollTimer?.cancel();
+      _userScrollTimer = Timer(const Duration(seconds: 5), () {
+        _userScrolling = false;
+        _lastScrolledIndex = -1;
+      });
+    }
+    return false;
+  }
+
+  // ---- 공유 수신 ----
   void _initShareIntent() {
     if (!Platform.isAndroid) return;
-
-    // 앱이 켜져 있는 동안 들어오는 공유
     _intentSub = _shareEvents.receiveBroadcastStream().listen(
           (event) => _onShared(event as String?),
           onError: (e) => logger.e('share event error', error: e),
         );
-
-    // 공유로 앱이 처음 열린 경우
     _shareMethod
         .invokeMethod<String>('getInitialText')
         .then(_onShared)
-        .catchError((e) => logger.e('initial share error', error: e));
+        .catchError((e) {
+      logger.e('initial share error', error: e);
+      return null;
+    });
   }
 
   void _onShared(String? text) {
     final t = (text ?? '').trim();
     if (t.isEmpty) return;
     _textController.text = t;
-    if (_ready && !_busy) _speak();
+    if (_ready && !_engine.isRunning) _start();
   }
 
-  // ---- 모델/목소리 로드 ----
-  Future<void> _loadModels() async {
-    try {
-      _tts = await loadTextToSpeech('assets/onnx', useGpu: false);
-      await _loadStyle(_voice);
-      setState(() {
-        _ready = true;
-        _status = '준비 완료. 문장을 입력하거나 다른 앱에서 공유하세요.';
-      });
-    } catch (e, st) {
-      logger.e('model load failed', error: e, stackTrace: st);
-      setState(() => _status = '엔진 준비 실패: $e');
-    }
-  }
-
-  Future<Style> _loadStyle(String voice) async {
-    return _styleCache[voice] ??=
-        await loadVoiceStyle(['assets/voice_styles/$voice.json']);
-  }
-
-  // ---- 합성 + 재생 ----
-  Future<void> _speak() async {
+  // ---- 재생 제어 ----
+  Future<void> _start() async {
     final text = _textController.text.trim();
-    if (_tts == null || text.isEmpty || _busy) return;
+    if (!_ready || text.isEmpty) return;
 
     setState(() {
-      _busy = true;
-      _status = '음성 만드는 중...';
+      _showList = true;
+      _lastScrolledIndex = -1;
+      _menuHint = null;
     });
+    await _playback.invokeMethod('start', {
+      'text': '읽을 준비 중...',
+      'progress': '',
+    }).catchError((_) => null);
 
-    try {
-      final style = await _loadStyle(_voice);
-      final result =
-          await _tts!.call(text, _lang, style, _steps, speed: _speed);
-      final wav = (result['wav'] as List).cast<double>();
-      final durationS = (result['duration'] as List).cast<double>()[0];
-
-      final dir = await getTemporaryDirectory();
-      final path =
-          '${dir.path}/suto_${DateTime.now().millisecondsSinceEpoch}.wav';
-      writeWavFile(path, wav, _tts!.sampleRate);
-
-      await _audioPlayer.setAudioSource(AudioSource.uri(Uri.file(path)));
-      await _audioPlayer.play();
-      setState(
-          () => _status = '재생 중 (${durationS.toStringAsFixed(1)}초)');
-    } catch (e, st) {
-      logger.e('synthesis failed', error: e, stackTrace: st);
-      setState(() => _status = '오류: $e');
-    } finally {
-      setState(() => _busy = false);
-    }
+    await _engine.start(text);
   }
 
   Future<void> _stop() async {
-    await _audioPlayer.stop();
-    setState(() => _status = '정지했어요.');
+    await _engine.stop();
+    await _playback.invokeMethod('stop').catchError((_) => null);
+    if (mounted) setState(() => _showList = false);
   }
 
-  // ---- UI ----
+  Future<void> _back() async {
+    await _stop();
+    if (mounted) setState(() => _menuHint = null);
+  }
+
+  Future<void> _togglePause() async {
+    if (_engine.isPlaying) {
+      await _engine.pause();
+    } else {
+      await _engine.resume();
+    }
+  }
+
+  // ---- 설정 시트 ----
+  void _openSettings() {
+    showModalBottomSheet<void>(
+      context: context,
+      backgroundColor: kCard,
+      isScrollControlled: true,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setSheet) {
+          void update(VoidCallback change) {
+            change();
+            _settings.clamp();
+            _applySettingsToEngine();
+            _scheduleSave();
+            setSheet(() {});
+            if (mounted) setState(() {});
+          }
+
+          return Padding(
+            padding: EdgeInsets.fromLTRB(
+                20, 16, 20, MediaQuery.of(ctx).viewInsets.bottom + 24),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Center(
+                  child: Container(
+                    width: 40,
+                    height: 4,
+                    decoration: BoxDecoration(
+                      color: kLine,
+                      borderRadius: BorderRadius.circular(2),
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 18),
+                const Text('설정',
+                    style: TextStyle(fontSize: 17, fontWeight: FontWeight.bold)),
+                const SizedBox(height: 16),
+                DropdownButtonFormField<String>(
+                  value: _settings.voice,
+                  decoration: _dec('목소리'),
+                  items: _voiceNames.entries
+                      .map((e) => DropdownMenuItem(
+                          value: e.key, child: Text('${e.value} (${e.key})')))
+                      .toList(),
+                  onChanged: (v) => update(() => _settings.voice = v!),
+                ),
+                const SizedBox(height: 12),
+                DropdownButtonFormField<String>(
+                  value: _settings.lang,
+                  decoration: _dec('언어'),
+                  items: [
+                    const DropdownMenuItem(value: 'auto', child: Text('자동')),
+                    ...availableLangs.map(
+                      (l) => DropdownMenuItem(
+                        value: l,
+                        child: Text(l == 'na' ? 'na (미지정)' : l),
+                      ),
+                    ),
+                  ],
+                  onChanged: (v) => update(() => _settings.lang = v!),
+                ),
+                const SizedBox(height: 6),
+                _slider('속도', _settings.speed.toStringAsFixed(2),
+                    _settings.speed, 0.7, 2.0,
+                    (v) => update(() => _settings.speed = v)),
+                _slider('품질', '${_settings.steps}',
+                    _settings.steps.toDouble(), 5, 12,
+                    (v) => update(() => _settings.steps = v.round())),
+                const SizedBox(height: 8),
+                Text(
+                  _menuHint ?? '읽는 중에 바꾸면 아직 만들지 않은 문장부터 반영됩니다.',
+                  style: TextStyle(
+                    fontSize: 12,
+                    color: _menuHint == null ? Colors.white38 : kPlay,
+                  ),
+                ),
+              ],
+            ),
+          );
+        },
+      ),
+    );
+  }
+
+  // ---------------------------------------------------------------- UI
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       body: SafeArea(
-        child: SingleChildScrollView(
-          padding: const EdgeInsets.all(20),
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(20, 12, 20, 12),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              Row(
-                children: [
-                  const Text('22',
-                      style: TextStyle(
-                          fontSize: 26, fontWeight: FontWeight.w800)),
-                  const Text('SUTO-A',
-                      style: TextStyle(
-                          fontSize: 26,
-                          fontWeight: FontWeight.w800,
-                          color: kAccent)),
-                ],
-              ),
-              const Text('Supertonic 3 · 내 폰에서 바로 만드는 음성',
-                  style: TextStyle(fontSize: 12, color: Colors.white54)),
-              const SizedBox(height: 16),
-              Container(
-                decoration: BoxDecoration(
-                  color: kCard,
-                  borderRadius: BorderRadius.circular(14),
-                  border: Border.all(color: kLine),
-                ),
-                child: TextField(
-                  controller: _textController,
-                  maxLines: 7,
-                  minLines: 5,
-                  decoration: const InputDecoration(
-                    contentPadding: EdgeInsets.all(14),
-                    border: InputBorder.none,
-                    hintText:
-                        '여기에 읽어줄 글을 입력하세요.\n구글드라이브·문서 앱에서 "공유 → 22SUTO-A"를 눌러도 돼요.',
-                  ),
-                ),
-              ),
-              const SizedBox(height: 16),
-              Row(
-                children: [
-                  Expanded(
-                    child: DropdownButtonFormField<String>(
-                      value: _voice,
-                      decoration: _dec('목소리'),
-                      items: _voices.entries
-                          .map((e) => DropdownMenuItem(
-                              value: e.key,
-                              child: Text('${e.value} (${e.key})')))
-                          .toList(),
-                      onChanged: (v) => setState(() => _voice = v!),
-                    ),
-                  ),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: DropdownButtonFormField<String>(
-                      value: _lang,
-                      decoration: _dec('언어'),
-                      items: availableLangs
-                          .map((l) => DropdownMenuItem(
-                              value: l,
-                              child: Text(l == 'na' ? '자동 (na)' : l)))
-                          .toList(),
-                      onChanged: (v) => setState(() => _lang = v!),
-                    ),
-                  ),
-                ],
-              ),
+              _header(),
               const SizedBox(height: 12),
-              _slider('속도', _speed.toStringAsFixed(2), _speed, 0.7, 2.0,
-                  (v) => setState(() => _speed = v)),
-              _slider('품질', '$_steps', _steps.toDouble(), 5, 12,
-                  (v) => setState(() => _steps = v.round())),
+              Expanded(child: _showList ? _progressView() : _inputView()),
+              const SizedBox(height: 10),
+              _controls(),
               const SizedBox(height: 8),
-              Row(
-                children: [
-                  Expanded(
-                    flex: 3,
-                    child: FilledButton(
-                      style: FilledButton.styleFrom(
-                        backgroundColor: kAccent,
-                        padding: const EdgeInsets.symmetric(vertical: 16),
-                      ),
-                      onPressed: (_ready && !_busy) ? _speak : null,
-                      child: const Text('▶ 읽어주기',
-                          style: TextStyle(
-                              fontSize: 17, fontWeight: FontWeight.bold)),
-                    ),
-                  ),
-                  const SizedBox(width: 10),
-                  Expanded(
-                    flex: 1,
-                    child: OutlinedButton(
-                      style: OutlinedButton.styleFrom(
-                        padding: const EdgeInsets.symmetric(vertical: 16),
-                      ),
-                      onPressed: _stop,
-                      child: const Text('■ 정지'),
-                    ),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 14),
-              Center(
-                child: Text(
-                  _status,
-                  textAlign: TextAlign.center,
-                  style: TextStyle(
-                    fontSize: 13,
-                    color: _status.startsWith('오류') ||
-                            _status.startsWith('엔진 준비 실패')
-                        ? const Color(0xFFFF7676)
-                        : Colors.white54,
-                  ),
+              Text(
+                _engine.error ?? _engine.status,
+                textAlign: TextAlign.center,
+                style: TextStyle(
+                  fontSize: 12.5,
+                  color: _engine.error != null
+                      ? const Color(0xFFFF7676)
+                      : Colors.white54,
                 ),
               ),
-              if (_busy)
-                const Padding(
-                  padding: EdgeInsets.only(top: 12),
-                  child: Center(child: CircularProgressIndicator()),
-                ),
             ],
           ),
         ),
@@ -299,10 +353,341 @@ class _TTSPageState extends State<TTSPage> {
     );
   }
 
+  Widget _header() {
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.center,
+      children: [
+        // 진행 화면에서는 로고 자리에 뒤로 버튼이 나타난다
+        if (_showList)
+          IconButton(
+            onPressed: _back,
+            icon: const Icon(Icons.arrow_back),
+            tooltip: '입력 화면으로 돌아가기',
+            style: IconButton.styleFrom(
+              backgroundColor: kCard,
+              side: const BorderSide(color: kLine),
+            ),
+          )
+        else
+          Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisSize: MainAxisSize.min,
+            children: const [
+              Text.rich(
+                TextSpan(children: [
+                  TextSpan(
+                      text: '22',
+                      style: TextStyle(
+                          fontSize: 23, fontWeight: FontWeight.w800)),
+                  TextSpan(
+                      text: 'SUTO-A',
+                      style: TextStyle(
+                          fontSize: 23,
+                          fontWeight: FontWeight.w800,
+                          color: kAccent)),
+                ]),
+              ),
+              Text('Supertonic 3 · 내 폰에서 바로 만드는 음성',
+                  style: TextStyle(fontSize: 11, color: Colors.white38)),
+            ],
+          ),
+        const Spacer(),
+        if (_showList)
+          Padding(
+            padding: const EdgeInsets.only(right: 8),
+            child: Text(
+              '${_engine.lang} · ${_engine.doneCount}/${_engine.total}',
+              style: const TextStyle(fontSize: 12, color: Colors.white38),
+            ),
+          ),
+        // 설정 메뉴는 입력 화면과 진행 화면 모두에서 열 수 있다
+        IconButton(
+          onPressed: _openSettings,
+          icon: const Icon(Icons.menu),
+          tooltip: '설정',
+          style: IconButton.styleFrom(
+            backgroundColor: kCard,
+            side: const BorderSide(color: kLine),
+          ),
+        ),
+      ],
+    );
+  }
+
+  // ---- 입력 화면 ----
+  Widget _inputView() {
+    return Container(
+      decoration: BoxDecoration(
+        color: kCard,
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: kLine),
+      ),
+      child: TextField(
+        controller: _textController,
+        maxLines: null,
+        expands: true,
+        textAlignVertical: TextAlignVertical.top,
+        decoration: const InputDecoration(
+          contentPadding: EdgeInsets.all(14),
+          border: InputBorder.none,
+          hintText:
+              '읽어줄 글을 붙여넣으세요. 아무리 길어도 괜찮아요.\n\n구글드라이브·문서 앱에서 "공유 → 22SUTO-A"를 눌러도 됩니다.',
+        ),
+      ),
+    );
+  }
+
+  // ---- 진행 화면 ----
+  Widget _progressView() {
+    return Column(
+      children: [
+        _trackBoard(),
+        const SizedBox(height: 12),
+        Expanded(child: _sentenceList()),
+      ],
+    );
+  }
+
+  Widget _trackBoard() {
+    final items = _engine.items;
+    final synthIdx = _engine.synthesizingIndex;
+    final playIdx = _engine.currentIndex;
+    String textAt(int i) => (i >= 0 && i < items.length) ? items[i].text : '대기 중';
+
+    return Container(
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: kCard,
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: kLine),
+      ),
+      child: Column(
+        children: [
+          _trackRow(
+            label: '합성',
+            color: kSynth,
+            active: synthIdx >= 0,
+            index: synthIdx,
+            text: textAt(synthIdx),
+          ),
+          const SizedBox(height: 8),
+          _trackRow(
+            label: '재생',
+            color: kPlay,
+            active: _engine.isPlaying && !_engine.isStalled,
+            index: playIdx,
+            text: textAt(playIdx),
+          ),
+          const SizedBox(height: 10),
+          Row(
+            children: [
+              const Text('대기열',
+                  style: TextStyle(fontSize: 11, color: Colors.white38)),
+              const SizedBox(width: 8),
+              ...List.generate(_engine.prefetchAhead + 1, (i) {
+                final filled = i < _engine.readyCount;
+                return Container(
+                  width: 18,
+                  height: 6,
+                  margin: const EdgeInsets.only(right: 4),
+                  decoration: BoxDecoration(
+                    color: filled ? kSynth : kLine,
+                    borderRadius: BorderRadius.circular(3),
+                  ),
+                );
+              }),
+              const Spacer(),
+              Text('${_engine.readyCount}개 준비됨',
+                  style: const TextStyle(fontSize: 11, color: Colors.white38)),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _trackRow({
+    required String label,
+    required Color color,
+    required bool active,
+    required int index,
+    required String text,
+  }) {
+    return Row(
+      children: [
+        AnimatedContainer(
+          duration: const Duration(milliseconds: 250),
+          width: 44,
+          padding: const EdgeInsets.symmetric(vertical: 4),
+          decoration: BoxDecoration(
+            color: active ? color.withValues(alpha: 0.18) : Colors.transparent,
+            border: Border.all(color: active ? color : kLine),
+            borderRadius: BorderRadius.circular(8),
+          ),
+          child: Text(
+            label,
+            textAlign: TextAlign.center,
+            style: TextStyle(
+              fontSize: 11,
+              fontWeight: FontWeight.bold,
+              color: active ? color : Colors.white30,
+            ),
+          ),
+        ),
+        const SizedBox(width: 8),
+        SizedBox(
+          width: 32,
+          child: Text(
+            index >= 0 ? '#${index + 1}' : '',
+            style:
+                TextStyle(fontSize: 11, color: active ? color : Colors.white24),
+          ),
+        ),
+        Expanded(
+          child: Text(
+            text,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(
+              fontSize: 12.5,
+              color: active ? Colors.white70 : Colors.white24,
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _sentenceList() {
+    final items = _engine.items;
+    return NotificationListener<UserScrollNotification>(
+      onNotification: _onScrollNotification,
+      child: ListView.builder(
+        controller: _listController,
+        itemCount: items.length,
+        itemExtent: _itemExtent,
+        itemBuilder: (context, i) {
+          final it = items[i];
+          final isCurrent = it.status == SentenceStatus.playing;
+
+          return Padding(
+            padding: const EdgeInsets.only(bottom: 8),
+            child: InkWell(
+              borderRadius: BorderRadius.circular(12),
+              // 문장을 누르면 그 지점부터 읽고, 뒤 문장들을 이어서 합성한다
+              onTap: () {
+                _lastScrolledIndex = i;
+                _engine.seekToUnit(i);
+              },
+              child: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                decoration: BoxDecoration(
+                  color: isCurrent ? kPlay.withValues(alpha: 0.10) : kCard,
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(color: isCurrent ? kPlay : kLine),
+                ),
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Padding(
+                      padding: const EdgeInsets.only(top: 2),
+                      child: StatusIcon(it.status),
+                    ),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: Text(
+                        it.text,
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          fontSize: 13,
+                          height: 1.4,
+                          color: it.status == SentenceStatus.done
+                              ? Colors.white30
+                              : Colors.white70,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          );
+        },
+      ),
+    );
+  }
+
+  // ---- 하단 버튼 ----
+  Widget _controls() {
+    if (!_showList) {
+      return SizedBox(
+        height: 54,
+        child: FilledButton(
+          style: FilledButton.styleFrom(backgroundColor: kAccent),
+          onPressed: _ready ? _start : null,
+          child: Text(
+            _ready ? '▶ 읽어주기' : '준비 중...',
+            style: const TextStyle(fontSize: 17, fontWeight: FontWeight.bold),
+          ),
+        ),
+      );
+    }
+
+    return Row(
+      children: [
+        Expanded(
+          child: OutlinedButton(
+            style: OutlinedButton.styleFrom(
+                padding: const EdgeInsets.symmetric(vertical: 14)),
+            onPressed: _engine.skipPrevious,
+            child: const Text('◀◀ 이전'),
+          ),
+        ),
+        const SizedBox(width: 8),
+        Expanded(
+          flex: 2,
+          child: FilledButton(
+            style: FilledButton.styleFrom(
+              backgroundColor: kAccent,
+              padding: const EdgeInsets.symmetric(vertical: 14),
+            ),
+            onPressed: _togglePause,
+            child: Text(
+              _engine.isPlaying ? '❙❙ 일시정지' : '▶ 이어듣기',
+              style: const TextStyle(fontSize: 15, fontWeight: FontWeight.bold),
+            ),
+          ),
+        ),
+        const SizedBox(width: 8),
+        Expanded(
+          child: OutlinedButton(
+            style: OutlinedButton.styleFrom(
+                padding: const EdgeInsets.symmetric(vertical: 14)),
+            onPressed: _engine.skipNext,
+            child: const Text('다음 ▶▶'),
+          ),
+        ),
+        const SizedBox(width: 8),
+        SizedBox(
+          width: 50,
+          child: OutlinedButton(
+            style: OutlinedButton.styleFrom(
+              padding: const EdgeInsets.symmetric(vertical: 14),
+              foregroundColor: kAccent,
+            ),
+            onPressed: _stop,
+            child: const Text('■'),
+          ),
+        ),
+      ],
+    );
+  }
+
   InputDecoration _dec(String label) => InputDecoration(
         labelText: label,
         filled: true,
-        fillColor: kCard,
+        fillColor: kBg,
         border: OutlineInputBorder(
           borderRadius: BorderRadius.circular(10),
           borderSide: const BorderSide(color: kLine),
@@ -313,21 +698,22 @@ class _TTSPageState extends State<TTSPage> {
       ValueChanged<double> onChanged) {
     return Row(
       children: [
-        SizedBox(width: 44, child: Text(label)),
+        SizedBox(
+            width: 40, child: Text(label, style: const TextStyle(fontSize: 13))),
         Expanded(
           child: Slider(
-            value: v,
-            min: min,
-            max: max,
-            activeColor: kAccent,
-            onChanged: onChanged,
-          ),
+              value: v,
+              min: min,
+              max: max,
+              activeColor: kAccent,
+              onChanged: onChanged),
         ),
         SizedBox(
-            width: 44,
-            child: Text(value,
-                textAlign: TextAlign.right,
-                style: const TextStyle(color: kAccent))),
+          width: 42,
+          child: Text(value,
+              textAlign: TextAlign.right,
+              style: const TextStyle(fontSize: 12, color: kAccent)),
+        ),
       ],
     );
   }

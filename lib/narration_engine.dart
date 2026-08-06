@@ -52,6 +52,17 @@ class NarrationEngine extends ChangeNotifier {
   int _steps = 8;
   double _speed = 1.05;
 
+  /// 다른 글로 옮겨갈 때 남겨 둘 음성 파일 수 (현재 문장 + 뒤 3개)
+  static const keepOnPark = 4;
+
+  /// 지금 읽고 있는 글의 id
+  String? _sourceId;
+  String? get sourceId => _sourceId;
+
+  /// 글별로 보관해 둔 대기열 — sourceId → (문장 번호 → 음성 파일 경로).
+  /// A를 듣다 B로 갔다가 A로 돌아와도 다시 합성하지 않도록 들고 있는다.
+  final Map<String, Map<int, String>> _parkedFiles = {};
+
   int _generation = 0;
   int _currentIndex = -1;
   int _synthesizingIndex = -1;
@@ -129,12 +140,25 @@ class NarrationEngine extends ChangeNotifier {
   }
 
   // ---------------------------------------------------------------- 시작/정지
-  Future<void> start(String text) async {
+  /// [sourceId]의 글을 읽기 시작한다.
+  ///
+  /// 이미 다른 글을 읽고 있었다면 그 글의 대기열을 보관해 두고 넘어간다.
+  /// 예전에 읽던 글이면 [resumeIndex]부터 이어서 읽고,
+  /// 보관해 둔 음성 파일이 남아 있으면 다시 만들지 않고 그대로 쓴다.
+  Future<void> start(
+    String text, {
+    required String sourceId,
+    int resumeIndex = 0,
+    String? resumeFilePath,
+  }) async {
     if (_tts == null) return;
 
-    await stop();
+    // 지금 읽던 글이 있으면 대기열을 보관하고 멈춘다 (파일은 지우지 않는다)
+    await park();
+
     final gen = ++_generation;
     _error = null;
+    _sourceId = sourceId;
 
     final cleaned = cleanText(text).trim();
     if (cleaned.isEmpty) {
@@ -146,6 +170,8 @@ class NarrationEngine extends ChangeNotifier {
         ? detectLang(cleaned)
         : _langChoice;
 
+    // 문장 나누기는 같은 글·같은 언어면 항상 같은 결과가 나온다.
+    // 그래서 앱을 다시 켜도 문장 번호가 그대로라 이어듣기가 성립한다.
     final sentences = splitUnits(cleaned, _lang);
     if (sentences.isEmpty) {
       _setStatus('읽을 문장이 없어요.');
@@ -155,20 +181,50 @@ class NarrationEngine extends ChangeNotifier {
     _items = [
       for (var i = 0; i < sentences.length; i++) SentenceItem(i, sentences[i])
     ];
-    _currentIndex = 0;
-    _playlistEnd = 0;
+
+    final startAt = resumeIndex.clamp(0, _items.length - 1);
+    _currentIndex = startAt;
+
+    // 앞쪽은 이미 들은 것으로 표시
+    for (var i = 0; i < startAt; i++) {
+      _items[i].status = SentenceStatus.done;
+    }
+
+    _sessionDir = await _sessionDirFor(sourceId);
+
+    // 보관해 둔 대기열 되살리기 (메모리에 남아 있던 것)
+    final parked = _parkedFiles[sourceId];
+    if (parked != null) {
+      parked.forEach((i, path) {
+        if (i < 0 || i >= _items.length) return;
+        if (!File(path).existsSync()) return;
+        _items[i].filePath = path;
+        if (i >= startAt) _items[i].status = SentenceStatus.ready;
+      });
+    }
+    // 앱을 다시 켠 뒤라면 재생 위치의 파일 하나만 남아 있다
+    if (resumeFilePath != null &&
+        _items[startAt].filePath == null &&
+        File(resumeFilePath).existsSync()) {
+      _items[startAt].filePath = resumeFilePath;
+      _items[startAt].status = SentenceStatus.ready;
+    }
+
+    _playlistEnd = startAt;
     _playlistMap.clear();
     _running = true;
     _stalled = true;
     _warmupTarget = sentences.length < warmupUnits ? sentences.length : warmupUnits;
     _warmOk = false;
-    _sessionDir = await _makeSessionDir(gen);
     _setStatus('첫 문장 만드는 중...');
 
     unawaited(_worker(gen));
+    unawaited(_pump(gen));
   }
 
-  Future<void> stop() async {
+  /// 재생을 멈추되 **음성 파일은 지우지 않고** 현재 위치 주변만 남긴다.
+  /// 다른 글로 옮겨갈 때와 정지 버튼을 눌렀을 때 모두 이걸 쓴다.
+  Future<void> park() async {
     _generation++;
     _running = false;
     _stalled = false;
@@ -179,9 +235,62 @@ class NarrationEngine extends ChangeNotifier {
       await player.stop();
       await player.clearAudioSources();
     } catch (_) {}
-    await _cleanupSessionDir();
+
+    final id = _sourceId;
+    if (id != null && _items.isNotEmpty) {
+      _parkedFiles[id] = _trimToWindow(_currentIndex, keepOnPark);
+    }
     _setStatus('정지했어요.');
   }
+
+  /// [from]부터 [count]개만 남기고 나머지 음성 파일을 지운다.
+  /// 남긴 것들의 (문장 번호 → 경로)를 돌려준다.
+  Map<int, String> _trimToWindow(int from, int count) {
+    final keep = <int, String>{};
+    final lo = from < 0 ? 0 : from;
+    final hi = lo + count;
+    for (var i = 0; i < _items.length; i++) {
+      final p = _items[i].filePath;
+      if (p == null) continue;
+      if (i >= lo && i < hi && File(p).existsSync()) {
+        keep[i] = p;
+        continue;
+      }
+      _items[i].filePath = null;
+      if (_items[i].status == SentenceStatus.ready) {
+        _items[i].status = SentenceStatus.pending;
+      }
+      try {
+        final f = File(p);
+        if (f.existsSync()) f.deleteSync();
+      } catch (_) {}
+    }
+    return keep;
+  }
+
+  /// 글을 삭제할 때 — 보관 중인 대기열과 음성 파일 폴더를 통째로 없앤다
+  Future<void> dropSource(String sourceId) async {
+    _parkedFiles.remove(sourceId);
+    if (_sourceId == sourceId) {
+      _sourceId = null;
+      _items = [];
+      _currentIndex = -1;
+      _running = false;
+    }
+    try {
+      final dir = await _sessionDirFor(sourceId, create: false);
+      if (dir.existsSync()) dir.deleteSync(recursive: true);
+    } catch (_) {}
+    notifyListeners();
+  }
+
+  /// 지금 위치의 음성 파일 경로 (앱을 끌 때 저장해 둘 값)
+  String? get currentFilePath {
+    if (_currentIndex < 0 || _currentIndex >= _items.length) return null;
+    return _items[_currentIndex].filePath;
+  }
+
+  Future<void> stop() => park();
 
   Future<void> pause() async {
     await player.pause();
@@ -241,7 +350,10 @@ class NarrationEngine extends ChangeNotifier {
     final wasFinished = !_running;
     if (wasFinished) {
       _running = true;
-      _sessionDir ??= await _makeSessionDir(_generation);
+      final id = _sourceId;
+      if (_sessionDir == null && id != null) {
+        _sessionDir = await _sessionDirFor(id);
+      }
       _setStatus('이어서 준비 중...');
       unawaited(_worker(_generation));
     }
@@ -468,21 +580,39 @@ class NarrationEngine extends ChangeNotifier {
     }
   }
 
-  Future<Directory> _makeSessionDir(int gen) async {
+  /// 글마다 고정된 폴더를 쓴다. 그래야 다른 글에 갔다 와도 파일이 그대로 있다.
+  Future<Directory> _sessionDirFor(String sourceId, {bool create = true}) async {
     final base = await getTemporaryDirectory();
-    final dir = Directory('${base.path}/suto_$gen');
-    if (dir.existsSync()) dir.deleteSync(recursive: true);
-    dir.createSync(recursive: true);
+    final dir = Directory('${base.path}/suto_$sourceId');
+    if (create && !dir.existsSync()) dir.createSync(recursive: true);
     return dir;
   }
 
-  Future<void> _cleanupSessionDir() async {
-    final dir = _sessionDir;
-    _sessionDir = null;
-    if (dir == null) return;
+  /// 앱을 켤 때 정리 — 목록에 없는 글의 폴더는 통째로 지우고,
+  /// 남은 폴더에서는 [keepPaths]에 든 파일(각 글의 마지막 재생 위치)만 남긴다.
+  static Future<void> cleanupTemp({
+    required Set<String> keepSourceIds,
+    required Set<String> keepPaths,
+  }) async {
     try {
-      if (dir.existsSync()) dir.deleteSync(recursive: true);
-    } catch (_) {}
+      final base = await getTemporaryDirectory();
+      for (final entry in base.listSync()) {
+        if (entry is! Directory) continue;
+        final name = entry.path.split('/').last;
+        if (!name.startsWith('suto_')) continue;
+
+        final id = name.substring(5);
+        if (!keepSourceIds.contains(id)) {
+          entry.deleteSync(recursive: true);
+          continue;
+        }
+        for (final f in entry.listSync()) {
+          if (f is File && !keepPaths.contains(f.path)) f.deleteSync();
+        }
+      }
+    } catch (e, st) {
+      logger.e('임시 폴더 정리 실패', error: e, stackTrace: st);
+    }
   }
 
   void _setStatus(String s) {
@@ -494,7 +624,8 @@ class NarrationEngine extends ChangeNotifier {
   void dispose() {
     _generation++;
     player.dispose();
-    unawaited(_cleanupSessionDir());
+    // 음성 파일은 지우지 않는다. 앱을 다시 켤 때 cleanupTemp()가
+    // 각 글의 마지막 재생 위치 파일만 남기고 정리한다.
     super.dispose();
   }
 }

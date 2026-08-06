@@ -1,7 +1,7 @@
 name: suto_a
 description: "22SUTO-A — Supertonic 3 on-device TTS for Android"
 publish_to: 'none'
-version: 0.0.1+1
+version: 0.0.3+3
 
 environment:
   sdk: ^3.5.0

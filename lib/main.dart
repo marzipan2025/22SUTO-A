@@ -637,7 +637,14 @@ class _TTSPageState extends State<TTSPage> {
   // ---------------------------------------------------------------- UI
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
+    // 진행 화면에서 시스템 뒤로가기를 누르면 앱이 꺼지지 않고 입력 화면으로만 간다.
+    // 합성·재생은 그대로 이어진다. 입력 화면에서는 평소대로 앱을 빠져나간다.
+    return PopScope(
+      canPop: !_showList,
+      onPopInvokedWithResult: (didPop, _) {
+        if (!didPop && _showList) _back();
+      },
+      child: Scaffold(
       // 배경 아무 데나 누르면 인풋박스 포커스가 풀린다
       body: GestureDetector(
         behavior: HitTestBehavior.opaque,
@@ -672,6 +679,7 @@ class _TTSPageState extends State<TTSPage> {
           ),
         ),
         ),
+      ),
       ),
     );
   }

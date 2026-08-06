@@ -52,8 +52,11 @@ class NarrationEngine extends ChangeNotifier {
   int _steps = 8;
   double _speed = 1.05;
 
-  /// 다른 글로 옮겨갈 때 남겨 둘 음성 파일 수 (현재 문장 + 뒤 3개)
-  static const keepOnPark = 4;
+  /// 다른 글로 옮겨갈 때 남겨 둘 음성 파일 수 (현재 문장 + 뒤 9개).
+  ///
+  /// 44.1kHz 모노 16bit WAV라 한 개가 대략 1MB 안팎이므로,
+  /// 글 하나당 10MB 정도를 들고 있는 셈이다.
+  static const keepOnPark = 10;
 
   /// 지금 읽고 있는 글의 id
   String? _sourceId;

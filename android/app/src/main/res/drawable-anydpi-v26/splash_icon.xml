@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 스플래시 전용 아이콘.
+
+     시스템은 적응형(adaptive) 아이콘이 아닌 구형 아이콘을 만나면 흰색 원 받침을 강제로
+     깔아버린다. windowSplashScreenIconBackgroundColor 로는 그 받침 색이 바뀌지 않는다.
+     그래서 적응형 드로어블을 직접 만들어 넘겨 legacy 처리 자체를 우회한다.
+
+     background 를 배경과 같은 검정으로 두어 받침 원이 배경에 묻힌다.
+     런처 아이콘(@mipmap/ic_launcher)은 건드리지 않는다. -->
+<adaptive-icon xmlns:android="http://schemas.android.com/apk/res/android">
+    <background android:drawable="@color/splash_bg" />
+    <foreground>
+        <!-- 적응형 아이콘 캔버스는 108dp, 안전 영역은 가운데 66dp다.
+             양쪽 20%씩 비우면 내용이 약 65dp 안에 들어와 원에 잘리지 않는다.
+             dp 가 아니라 비율로 줘야 스플래시 크기로 확대돼도 비율이 유지된다. -->
+        <inset
+            android:drawable="@mipmap/ic_launcher"
+            android:inset="27%" />
+    </foreground>
+</adaptive-icon>

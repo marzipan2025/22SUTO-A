@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- 앱 시작 화면(스플래시) 배경. 아이콘 받침 원도 같은 색을 써서
+         원이 배경에 묻혀 보이지 않게 한다. -->
+    <color name="splash_bg">#FF000000</color>
+</resources>

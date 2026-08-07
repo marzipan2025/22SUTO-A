@@ -9,6 +9,7 @@ import 'package:suto_a/narration_engine.dart';
 import 'package:suto_a/settings_store.dart';
 import 'package:suto_a/source_store.dart';
 import 'package:suto_a/status_icon.dart';
+import 'package:suto_a/toast.dart';
 
 /// 네이티브(MainActivity.kt)와 주고받는 통로
 const _shareMethod = MethodChannel('suto_a/share');
@@ -358,7 +359,7 @@ class _TTSPageState extends State<TTSPage> {
     final data = await Clipboard.getData(Clipboard.kTextPlain);
     final t = (data?.text ?? '').trim();
     if (t.isEmpty) {
-      _showSnack('클립보드가 비어 있어요.');
+      _showToast('클립보드가 비었어요');
       return;
     }
     _addSource(kind: SourceKind.clipboard, text: t);
@@ -416,12 +417,12 @@ class _TTSPageState extends State<TTSPage> {
           .map((k, v) => MapEntry(k.toString(), v));
       if (map['cancelled'] == true) return;
       if (map['ok'] != true) {
-        _showSnack(map['error']?.toString() ?? '파일을 열 수 없어요.');
+        _showToast(map['error']?.toString() ?? '열 수 없는 파일');
         return;
       }
       final text = map['text']?.toString() ?? '';
       if (text.trim().isEmpty) {
-        _showSnack('문서에서 읽을 글을 찾지 못했어요.');
+        _showToast('읽을 글이 없어요');
         return;
       }
       final name = map['name']?.toString() ?? '문서';
@@ -429,18 +430,20 @@ class _TTSPageState extends State<TTSPage> {
       final note = map['note']?.toString() ?? '';
       // 경로가 아니라 뽑아낸 글을 그대로 저장한다 (원본이 사라져도 남도록)
       _addSource(kind: SourceKind.file, text: text, fileName: name);
-      _showSnack('$name — $chars자를 가져왔어요.${note.isNotEmpty ? ' $note' : ''}');
+      // 파일 이름은 바로 아래 목록에 뜨므로 토스트에서는 뺀다
+      _showToast(note.isNotEmpty ? note : '$chars자 가져왔어요');
     } catch (e) {
+      // 예외 원문은 로그로만 남긴다 — 토스트에 띄우면 화면을 뒤덮는다
       logger.e('file pick error', error: e);
-      _showSnack('파일을 열 수 없어요: $e');
+      _showToast('열 수 없는 파일');
     } finally {
       if (mounted) setState(() => _pickingFile = false);
     }
   }
 
-  void _showSnack(String message) {
+  void _showToast(String message) {
     if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(message)));
+    showToast(context, message);
   }
 
   // ---- 재생 제어 ----

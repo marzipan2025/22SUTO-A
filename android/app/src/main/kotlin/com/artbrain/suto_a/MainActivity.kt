@@ -108,7 +108,7 @@ class MainActivity : FlutterActivity() {
             when (call.method) {
                 "pickDocument" -> {
                     if (pendingFileResult != null) {
-                        result.success(mapOf("ok" to false, "error" to "이미 파일 선택창이 열려 있어요."))
+                        result.success(mapOf("ok" to false, "error" to "파일 선택창이 이미 열려 있어요"))
                     } else {
                         pendingFileResult = result
                         openDocumentPicker()
@@ -182,7 +182,7 @@ class MainActivity : FlutterActivity() {
         try {
             startActivityForResult(intent, pickDocumentRequestCode)
         } catch (e: Exception) {
-            pendingFileResult?.success(mapOf("ok" to false, "error" to "파일 선택창을 열 수 없어요."))
+            pendingFileResult?.success(mapOf("ok" to false, "error" to "파일 선택창을 열 수 없어요"))
             pendingFileResult = null
         }
     }
@@ -204,9 +204,9 @@ class MainActivity : FlutterActivity() {
             val response = try {
                 extractDocument(uri)
             } catch (e: DocError) {
-                mapOf("ok" to false, "error" to (e.message ?: "파일을 읽을 수 없어요."))
+                mapOf("ok" to false, "error" to (e.message ?: "읽을 수 없는 파일"))
             } catch (e: Exception) {
-                mapOf("ok" to false, "error" to "파일을 읽을 수 없어요.")
+                mapOf("ok" to false, "error" to "읽을 수 없는 파일")
             }
             runOnUiThread { result?.success(response) }
         }.start()
@@ -228,13 +228,13 @@ class MainActivity : FlutterActivity() {
         }
 
         val text = tidyText(raw)
-        if (text.isEmpty()) throw DocError("파일에서 읽을 글을 찾지 못했어요.")
+        if (text.isEmpty()) throw DocError("읽을 글이 없어요")
 
         var finalText = text
         var note = ""
         if (finalText.length > MAX_CHARS) {
             finalText = finalText.substring(0, MAX_CHARS)
-            note = "파일이 너무 길어 앞부분 ${"%,d".format(MAX_CHARS)}자만 가져왔어요."
+            note = "너무 길어 앞 ${"%,d".format(MAX_CHARS)}자만 가져왔어요"
         }
 
         return mapOf(

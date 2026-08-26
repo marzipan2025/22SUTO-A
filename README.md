@@ -35,8 +35,22 @@ flutter build appbundle   # 플레이스토어 업로드용 .aab
 
 - `lib/helper.dart` — Supertonic 공식 Flutter 예제의 추론 파이프라인 (ONNX Runtime)
 - `lib/main.dart` — UI(한국어) + 공유 수신 + 재생
+- `lib/narration_engine.dart` — 선행 합성 파이프라인
+- `lib/theme.dart` — 색·글꼴·픽셀 카드
+- `lib/pixel.dart` — 격자 아이콘, 계단 모서리, 목록 끝 덮개
 - `scripts/download_assets.sh` — Hugging Face에서 모델 받기
 - 모델 파일은 용량 문제로 git에 포함하지 않음
+
+## 글꼴
+
+- 본문: 코레일체 Light
+- 숫자·영문 표시: [Panchang](https://www.fontshare.com/fonts/panchang)
+
+## 릴리스 빌드 주의
+
+`android/app/proguard-rules.pro` 를 지우지 말 것. R8 이 `ai.onnxruntime`
+클래스 이름을 줄이면 네이티브 JNI 조회가 실패해 첫 문장을 합성하는
+순간 앱이 통째로 죽는다. 디버그 빌드에서는 드러나지 않는다.
 
 ## 라이선스
 

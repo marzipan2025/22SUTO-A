@@ -88,7 +88,7 @@ class _StatusIconState extends State<StatusIcon>
       case SentenceStatus.done:
         return kGlyphCheck;
       case SentenceStatus.failed:
-        return kGlyphCross;
+        return kGlyphFail;
     }
   }
 

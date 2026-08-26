@@ -85,11 +85,13 @@ class _TTSPageState extends State<TTSPage> {
   static const _bodyStyle = TextStyle(fontSize: 13, height: 1.4);
   static const _itemVerticalPadding = 20.0; // 위아래 안쪽 여백 (10 + 10)
   static const _itemSidePadding = 12.0; // 좌우 안쪽 여백
-  static const _itemGap = 8.0; // 항목 사이 간격
+  static const _itemGap = 4.0; // 항목 사이 간격
 
   // 문장 카드 왼쪽의 상태 그림 — 격자 한 칸 크기와 본문까지의 거리
   static const _iconCell = 2.5;
   static const _iconGap = 10.0;
+  /// 그림 윗선을 본문 첫 줄 윗선에 맞추려고 내리는 양
+  static const _iconTop = 3.0;
   /// 상태 그림이 차지하는 폭 (StatusIcon 이 늘 같은 크기로 잡아 둔다)
   static const _iconWidth = 7 * _iconCell;
 
@@ -751,7 +753,7 @@ class _TTSPageState extends State<TTSPage> {
                         size: 24, color: kYellow, weight: FontWeight.w700)),
               ]),
             ),
-            const SizedBox(height: 6),
+            const SizedBox(height: 2),
             const Text('Supertonic 3 · 내 폰에서 바로 만드는 음성',
                 style: TextStyle(fontSize: 11, color: kMuted)),
           ],
@@ -800,7 +802,7 @@ class _TTSPageState extends State<TTSPage> {
             ),
           ),
         ),
-        const SizedBox(height: 5),
+        const SizedBox(height: 1.25),
         Text(
           '${_fmt(_engine.doneCount)} / ${_fmt(_engine.total)}',
           style: displayStyle(size: 18, color: kSlate, weight: FontWeight.w600),
@@ -888,51 +890,45 @@ class _TTSPageState extends State<TTSPage> {
         // 고른 글만 노란 카드. 나머지는 가라앉혀 둔다.
         final skin = selected ? kSkinPlaying : kSkinPending;
 
+        // 진행 화면의 문장 카드와 같은 짜임 — 그림이 왼쪽, 글이 그 오른쪽에서
+        // 그림 윗선에 맞춰 시작한다. 지우기 가위표도 같은 눈금·같은 높이.
         return PixelCard(
           fill: skin.fill,
-          padding: const EdgeInsets.fromLTRB(12, 10, 8, 10),
+          padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
           onTap: () => setState(() => _selectedId = s.id),
           child: Row(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
+              Padding(
+                padding: const EdgeInsets.only(top: _iconTop),
+                child: PixelIcon(isFile ? kGlyphFile : kGlyphPaste,
+                    cell: _iconCell, color: skin.ink),
+              ),
+              const SizedBox(width: _iconGap),
               Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Row(
-                      children: [
-                        PixelIcon(isFile ? kGlyphFile : kGlyphPaste,
-                            cell: 1.8, color: skin.ink.withValues(alpha: 0.7)),
-                        const SizedBox(width: 6),
-                        Text(
-                          isFile ? '파일' : '붙여넣기',
-                          style: TextStyle(
-                            fontSize: 10,
-                            color: skin.ink.withValues(alpha: 0.7),
-                          ),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 5),
-                    Text(
-                      s.label,
-                      maxLines: 2, // 붙여넣기는 앞 두 줄, 파일은 파일명
-                      overflow: TextOverflow.ellipsis,
-                      style: TextStyle(
-                        fontSize: 12.5,
-                        height: 1.45,
-                        color: skin.ink,
-                      ),
-                    ),
-                  ],
+                child: Text(
+                  s.label,
+                  maxLines: 2, // 붙여넣기는 앞 두 줄, 파일은 파일명
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    fontSize: 12.5,
+                    height: 1.45,
+                    color: skin.ink,
+                  ),
                 ),
               ),
-              // 삭제 (확인 팝업 후 완전 삭제)
-              _pixelTap(
+              // 삭제 (확인 팝업 후 완전 삭제).
+              // 그림 자리는 파일 그림과 똑같이 두고, 손가락 닿을 넓이는
+              // 아래쪽으로만 넓힌다 — 그래야 그림의 y가 흔들리지 않는다.
+              GestureDetector(
+                behavior: HitTestBehavior.opaque,
                 onTap: () => _confirmDelete(s),
-                padding: const EdgeInsets.all(6),
-                child: PixelIcon(kGlyphCross,
-                    cell: 2, color: skin.ink.withValues(alpha: 0.55)),
+                child: Padding(
+                  padding: const EdgeInsets.only(
+                      left: _iconGap, top: _iconTop, bottom: 14),
+                  child: PixelIcon(kGlyphCross,
+                      cell: _iconCell, color: skin.ink.withValues(alpha: 0.55)),
+                ),
               ),
             ],
           ),
@@ -1162,17 +1158,28 @@ class _TTSPageState extends State<TTSPage> {
       );
     }
 
+    // 크기가 다른 두 표시어의 '윗선'을 맞춘다.
+    // 밑선을 먼저 맞춘 뒤, 캡 높이 차이만큼 작은 쪽을 끌어올리면
+    // 대문자 윗선이 한 줄로 선다.
+    const big = 34.0;
+    const small = 23.0;
+    const lift = (big - small) * kPanchangCapRatio;
+
     return Row(
-      crossAxisAlignment: CrossAxisAlignment.center,
+      crossAxisAlignment: CrossAxisAlignment.baseline,
+      textBaseline: TextBaseline.alphabetic,
       children: [
         _wordAction(
           label: _engine.isPlaying ? 'PAUSE' : 'PLAY',
-          size: 34,
+          size: big,
           weight: FontWeight.w700,
           onTap: _togglePause,
         ),
         const Spacer(),
-        _wordAction(label: 'STOP', onTap: _stop),
+        Transform.translate(
+          offset: const Offset(0, -lift),
+          child: _wordAction(label: 'STOP', size: small, onTap: _stop),
+        ),
       ],
     );
   }

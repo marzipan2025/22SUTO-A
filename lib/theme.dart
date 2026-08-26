@@ -95,6 +95,11 @@ class PixelCard extends StatelessWidget {
 /// 코레일체 — 본문 기본 글꼴. 한글이 들어가는 자리는 전부 이걸 쓴다.
 const kBodyFamily = 'Korail';
 
+/// Panchang 의 캡 하이트 비율 (OS/2 sCapHeight 682 / unitsPerEm 1000).
+/// 크기가 다른 두 표시어의 '윗선'을 맞출 때 쓴다 — 밑선을 맞춘 다음
+/// 이 비율에 크기 차이를 곱한 만큼 작은 쪽을 끌어올리면 위가 가지런해진다.
+const kPanchangCapRatio = 0.682;
+
 /// Panchang — 숫자와 영문 보조 글자에 쓴다.
 /// 한글 자형이 없으므로 본문에는 절대 물리지 않는다.
 const kDisplayFamily = 'Panchang';

@@ -92,6 +92,9 @@ class _TTSPageState extends State<TTSPage> {
   static const _iconGap = 10.0;
   /// 그림 윗선을 본문 첫 줄 윗선에 맞추려고 내리는 양
   static const _iconTop = 3.0;
+  /// 지우기 가위표는 다른 그림보다 한 눈금 작게 (20dp → 16dp).
+  /// 같은 크기로 두면 글보다 가위표가 먼저 눈에 들어온다.
+  static const _crossCell = 2.0;
   /// 상태 그림이 차지하는 폭 (StatusIcon 이 늘 같은 크기로 잡아 둔다)
   static const _iconWidth = 7 * _iconCell;
 
@@ -927,7 +930,8 @@ class _TTSPageState extends State<TTSPage> {
                   padding: const EdgeInsets.only(
                       left: _iconGap, top: _iconTop, bottom: 14),
                   child: PixelIcon(kGlyphCross,
-                      cell: _iconCell, color: skin.ink.withValues(alpha: 0.55)),
+                      cell: _crossCell,
+                      color: skin.ink.withValues(alpha: 0.55)),
                 ),
               ),
             ],

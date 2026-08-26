@@ -6,9 +6,11 @@ import 'package:flutter/rendering.dart' show ScrollDirection;
 import 'package:flutter/services.dart';
 import 'package:suto_a/helper.dart';
 import 'package:suto_a/narration_engine.dart';
+import 'package:suto_a/pixel.dart';
 import 'package:suto_a/settings_store.dart';
 import 'package:suto_a/source_store.dart';
 import 'package:suto_a/status_icon.dart';
+import 'package:suto_a/theme.dart';
 import 'package:suto_a/toast.dart';
 
 /// 네이티브(MainActivity.kt)와 주고받는 통로
@@ -27,13 +29,6 @@ void main() {
   runApp(const SutoApp());
 }
 
-const kBg = Color(0xFF101418);
-const kCard = Color(0xFF1A2129);
-const kLine = Color(0xFF2A3441);
-const kAccent = Color(0xFFE53935); // 아이콘과 맞춘 레드 (버튼)
-const kSynth = Color(0xFFB9C4CF); // 합성 트랙 (중립)
-const kPlay = Color(0xFF4DA3FF); // 재생 트랙 (파랑 = 지금 재생 중)
-
 class SutoApp extends StatelessWidget {
   const SutoApp({super.key});
 
@@ -45,8 +40,13 @@ class SutoApp extends StatelessWidget {
       theme: ThemeData(
         brightness: Brightness.dark,
         scaffoldBackgroundColor: kBg,
-        colorScheme:
-            ColorScheme.fromSeed(seedColor: kAccent, brightness: Brightness.dark),
+        canvasColor: kBg,
+        colorScheme: ColorScheme.fromSeed(
+          seedColor: kYellow,
+          brightness: Brightness.dark,
+        ).copyWith(surface: kBg),
+        // 각진 화면에 동그란 물결은 어울리지 않는다
+        splashFactory: NoSplash.splashFactory,
         useMaterial3: true,
       ),
       home: const TTSPage(),
@@ -82,16 +82,24 @@ class _TTSPageState extends State<TTSPage> {
   // 문장 전체를 줄임 없이 보여주므로 항목 높이가 제각각이다.
   // 정확한 자동 스크롤을 위해 각 항목의 높이를 직접 계산해 캐시한다.
   static const _bodyStyle = TextStyle(fontSize: 13, height: 1.4);
-  static const _itemVerticalPadding = 16.0; // 위아래 안쪽 여백
+  static const _itemVerticalPadding = 20.0; // 위아래 안쪽 여백 (10 + 10)
+  static const _itemSidePadding = 12.0; // 좌우 안쪽 여백
   static const _itemGap = 8.0; // 항목 사이 간격
 
-  // 문장 셀 우측 상단의 셀 번호 (본문 위에 한 줄 차지)
+  // 문장 카드 왼쪽의 상태 그림 — 격자 한 칸 크기와 본문까지의 거리
+  static const _iconCell = 2.5;
+  static const _iconGap = 10.0;
+  /// 상태 그림이 차지하는 폭 (StatusIcon 이 늘 같은 크기로 잡아 둔다)
+  static const _iconWidth = 7 * _iconCell;
+
+  // 문장 셀 번호 (본문 아래에 한 줄 차지)
   static const _numberFontSize = 10.0;
   static const _numberLineFactor = 1.4;
   static const _numberStyle = TextStyle(
+    fontFamily: kDisplayFamily,
     fontSize: _numberFontSize,
     height: _numberLineFactor,
-    color: Colors.white24,
+    color: kMuted,
   );
   static const _itemMinHeight = 44.0;
 
@@ -239,9 +247,10 @@ class _TTSPageState extends State<TTSPage> {
     final cached = _extentCache[index];
     if (cached != null && cached.$1 == text) return cached.$2;
 
-    // 항목 안쪽 구성: 좌우 여백 12+12, 아이콘 20, 간격 10, 테두리 2
-    // (셀 번호는 본문 위 별도 줄이라 본문 폭에는 영향이 없다)
-    final textWidth = (listWidth - 12 - 12 - 20 - 10 - 2).clamp(40.0, listWidth);
+    // 항목 안쪽 구성: 좌우 여백, 상태 그림, 그림과 본문 사이 간격
+    // (셀 번호는 본문 아래 별도 줄이라 본문 폭에는 영향이 없다)
+    final textWidth = (listWidth - _itemSidePadding * 2 - _iconWidth - _iconGap)
+        .clamp(40.0, listWidth);
 
     // 본문 아래 셀 번호가 한 줄을 차지하므로 더미 한 줄을 붙여서 같이 잰다.
     // 번호는 10pt지만 본문 한 줄로 넉넉히 치는 편이 안전하다.
@@ -259,7 +268,7 @@ class _TTSPageState extends State<TTSPage> {
       textScaler: _scaler,
     )..layout(maxWidth: textWidth);
 
-    final h = (painter.height + _itemVerticalPadding + 2 + _itemSlack)
+    final h = (painter.height + _itemVerticalPadding + _itemSlack)
             .clamp(_itemMinHeight, double.infinity) +
         _itemGap;
     _extentCache[index] = (text, h);
@@ -370,24 +379,24 @@ class _TTSPageState extends State<TTSPage> {
     final ok = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
-        backgroundColor: kCard,
-        shape:
-            RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
-        title: const Text('삭제할까요?', style: TextStyle(fontSize: 16)),
+        backgroundColor: kSteel,
+        shape: const PixelBorder(unit: 5),
+        title: const Text('삭제할까요?',
+            style: TextStyle(fontSize: 16, color: Colors.white)),
         content: Text(
           item.label.length > 60
               ? '${item.label.substring(0, 60)}…'
               : item.label,
-          style: const TextStyle(fontSize: 13, color: Colors.white54),
+          style: const TextStyle(fontSize: 13, color: kOnSteel),
         ),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(ctx, false),
-            child: const Text('취소', style: TextStyle(color: Colors.white54)),
+            child: const Text('취소', style: TextStyle(color: kOnSteel)),
           ),
           TextButton(
             onPressed: () => Navigator.pop(ctx, true),
-            child: const Text('삭제', style: TextStyle(color: kAccent)),
+            child: const Text('삭제', style: TextStyle(color: kYellow)),
           ),
         ],
       ),
@@ -553,11 +562,9 @@ class _TTSPageState extends State<TTSPage> {
   void _openSettings() {
     showModalBottomSheet<void>(
       context: context,
-      backgroundColor: kCard,
+      backgroundColor: kSteel,
       isScrollControlled: true,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
-      ),
+      shape: const PixelBorder(unit: 6),
       builder: (ctx) => StatefulBuilder(
         builder: (ctx, setSheet) {
           void update(VoidCallback change) {
@@ -577,19 +584,15 @@ class _TTSPageState extends State<TTSPage> {
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
                 Center(
-                  child: Container(
-                    width: 40,
-                    height: 4,
-                    decoration: BoxDecoration(
-                      color: kLine,
-                      borderRadius: BorderRadius.circular(2),
-                    ),
-                  ),
+                  child: Container(width: 44, height: 4, color: kMuted),
                 ),
-                const SizedBox(height: 18),
-                const Text('설정',
-                    style: TextStyle(fontSize: 17, fontWeight: FontWeight.bold)),
-                const SizedBox(height: 16),
+                const SizedBox(height: 20),
+                Center(
+                  child: Text('SETTINGS',
+                      style: displayStyle(
+                          size: 15, color: kYellow, letterSpacing: 2.4)),
+                ),
+                const SizedBox(height: 20),
                 DropdownButtonFormField<String>(
                   value: _settings.voice,
                   decoration: _dec('목소리'),
@@ -626,7 +629,7 @@ class _TTSPageState extends State<TTSPage> {
                   _menuHint ?? '읽는 중에 바꾸면 아직 만들지 않은 문장부터 반영됩니다.',
                   style: TextStyle(
                     fontSize: 12,
-                    color: _menuHint == null ? Colors.white38 : kPlay,
+                    color: _menuHint == null ? kMuted : kYellow,
                   ),
                 ),
               ],
@@ -654,28 +657,26 @@ class _TTSPageState extends State<TTSPage> {
         onTap: () => FocusScope.of(context).unfocus(),
         child: SafeArea(
         child: Padding(
-          padding: const EdgeInsets.fromLTRB(20, 12, 20, 12),
+          padding: const EdgeInsets.fromLTRB(16, 8, 16, 10),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
               _header(),
-              const SizedBox(height: 12),
+              const SizedBox(height: 14),
               Expanded(child: _showList ? _progressView() : _inputView()),
               const SizedBox(height: 10),
               if (!_showList) ...[
                 _shortInputRow(),
-                const SizedBox(height: 10),
+                const SizedBox(height: 12),
               ],
               _controls(),
-              const SizedBox(height: 8),
+              const SizedBox(height: 6),
               Text(
                 _engine.error ?? _engine.status,
                 textAlign: TextAlign.center,
                 style: TextStyle(
-                  fontSize: 12.5,
-                  color: _engine.error != null
-                      ? const Color(0xFFFF7676)
-                      : Colors.white54,
+                  fontSize: 12,
+                  color: _engine.error != null ? kRed : kMuted,
                 ),
               ),
             ],
@@ -687,70 +688,119 @@ class _TTSPageState extends State<TTSPage> {
     );
   }
 
-  /// 아이콘 없이 글자만 담은 작은 버튼 (헤더에서 공용으로 쓴다)
-  Widget _chipButton({required String label, required VoidCallback? onPressed}) {
-    return OutlinedButton(
-      onPressed: onPressed,
-      style: OutlinedButton.styleFrom(
-        backgroundColor: kCard,
-        side: const BorderSide(color: kLine),
-        foregroundColor: Colors.white70,
-        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-        shape:
-            RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-      ),
-      child: Text(label, style: const TextStyle(fontSize: 13)),
+  /// 픽셀 아이콘을 누를 수 있게 감싼다. 그림은 작아도 손가락이 닿을 만큼 넓힌다.
+  Widget _pixelTap({
+    required VoidCallback? onTap,
+    required Widget child,
+    EdgeInsets padding = const EdgeInsets.symmetric(horizontal: 8, vertical: 12),
+  }) {
+    return GestureDetector(
+      behavior: HitTestBehavior.opaque,
+      onTap: onTap,
+      child: Padding(padding: padding, child: child),
     );
   }
 
+  /// 1345 → 1,345
+  static String _fmt(int n) {
+    final s = n.toString();
+    final b = StringBuffer();
+    for (var i = 0; i < s.length; i++) {
+      if (i > 0 && (s.length - i) % 3 == 0) b.write(',');
+      b.write(s[i]);
+    }
+    return b.toString();
+  }
+
   Widget _header() {
+    if (_showList) {
+      // 진행 화면 — 뒤로 · 지금 상태 · 설정
+      return Row(
+        children: [
+          _pixelTap(
+            onTap: _back,
+            child: const PixelIcon(kGlyphBack, cell: 4, color: kYellow),
+          ),
+          Expanded(child: _headerStatus()),
+          _pixelTap(
+            onTap: _openSettings,
+            child: const PixelIcon(kGlyphSettings, cell: 4, color: kYellow),
+          ),
+        ],
+      );
+    }
+
+    // 입력 화면 — 이름표 · 설정
     return Row(
       crossAxisAlignment: CrossAxisAlignment.center,
       children: [
-        // 진행 화면에서는 로고 자리에 뒤로 버튼이 나타난다 (눌러도 재생은 멈추지 않는다)
-        if (_showList)
-          _chipButton(label: '뒤로', onPressed: _back)
-        else
-          Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            mainAxisSize: MainAxisSize.min,
-            children: const [
-              Text.rich(
-                TextSpan(children: [
-                  TextSpan(
-                      text: '22',
-                      style: TextStyle(
-                          fontSize: 23, fontWeight: FontWeight.w800)),
-                  TextSpan(
-                      text: 'SUTO-A',
-                      style: TextStyle(
-                          fontSize: 23,
-                          fontWeight: FontWeight.w800,
-                          color: kAccent)),
-                ]),
-              ),
-              Text('Supertonic 3 · 내 폰에서 바로 만드는 음성',
-                  style: TextStyle(fontSize: 11, color: Colors.white38)),
-            ],
-          ),
+        Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text.rich(
+              TextSpan(children: [
+                TextSpan(
+                    text: '22',
+                    style: displayStyle(
+                        size: 24, color: Colors.white, weight: FontWeight.w700)),
+                TextSpan(
+                    text: 'SUTO-A',
+                    style: displayStyle(
+                        size: 24, color: kYellow, weight: FontWeight.w700)),
+              ]),
+            ),
+            const SizedBox(height: 6),
+            const Text('Supertonic 3 · 내 폰에서 바로 만드는 음성',
+                style: TextStyle(fontSize: 11, color: kMuted)),
+          ],
+        ),
         const Spacer(),
-        if (_showList)
+        if (_pickingFile)
           Padding(
             padding: const EdgeInsets.only(right: 8),
-            child: Text(
-              '${_engine.lang} · ${_engine.doneCount}/${_engine.total}',
-              style: const TextStyle(fontSize: 12, color: Colors.white38),
-            ),
-          ),
-        // 문서 불러오기는 이제 입력 화면의 아이콘 버튼이 담당한다
-        if (!_showList && _pickingFile)
-          const Padding(
-            padding: EdgeInsets.only(right: 10),
             child: Text('여는 중',
-                style: TextStyle(fontSize: 12, color: Colors.white38)),
+                style: displayStyle(size: 12, color: kSlate)),
           ),
-        // 설정 메뉴는 입력 화면과 진행 화면 모두에서 열 수 있다
-        _chipButton(label: '설정', onPressed: _openSettings),
+        _pixelTap(
+          onTap: _openSettings,
+          padding: const EdgeInsets.only(left: 12, top: 8, bottom: 8),
+          child: const PixelIcon(kGlyphSettings, cell: 4, color: kYellow),
+        ),
+      ],
+    );
+  }
+
+  /// 진행 화면 한가운데 — 지금 무엇을 하는 중인지, 어디까지 왔는지
+  Widget _headerStatus() {
+    final String word;
+    if (_engine.error != null) {
+      word = 'ERROR';
+    } else if (_engine.isPlaying) {
+      word = 'PLAYING';
+    } else if (_engine.isRunning) {
+      word = 'PAUSED';
+    } else {
+      word = 'STOPPED';
+    }
+
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Text(
+          word,
+          style: displayStyle(
+            size: 12,
+            color: _engine.error != null ? kRed : kYellow,
+            weight: FontWeight.w600,
+            letterSpacing: 2.4,
+          ),
+        ),
+        const SizedBox(height: 5),
+        Text(
+          '${_fmt(_engine.doneCount)} / ${_fmt(_engine.total)}',
+          style: displayStyle(size: 18, color: kSlate, weight: FontWeight.w600),
+        ),
       ],
     );
   }
@@ -761,7 +811,7 @@ class _TTSPageState extends State<TTSPage> {
     return _sources.isEmpty ? _emptyPicker() : _sourceList();
   }
 
-  /// 아무것도 없을 때 — 가운데 아이콘 버튼 두 개
+  /// 아무것도 없을 때 — 가운데 큰 버튼 두 개
   Widget _emptyPicker() {
     return Center(
       child: Column(
@@ -770,77 +820,50 @@ class _TTSPageState extends State<TTSPage> {
           Row(
             mainAxisSize: MainAxisSize.min,
             children: [
-              _bigIconButton(
-                icon: Icons.content_paste_rounded,
-                color: kPlay,
-                tooltip: '붙여넣기',
+              _glyphButton(
+                glyph: kGlyphPaste,
+                fill: kSlate,
+                cell: 4,
+                size: const Size(88, 74),
                 onPressed: _pasteFromClipboard,
               ),
               const SizedBox(width: 12),
-              _bigIconButton(
-                icon: Icons.note_add_outlined,
-                color: kSynth,
-                tooltip: '파일 추가',
+              _glyphButton(
+                glyph: kGlyphFile,
+                fill: kOlive,
+                cell: 4,
+                size: const Size(88, 74),
                 onPressed: _pickingFile ? null : _pickFile,
               ),
             ],
           ),
-          const SizedBox(height: 14),
+          const SizedBox(height: 18),
           const Text('읽어줄 글을 추가하세요',
-              style: TextStyle(fontSize: 12, color: Colors.white38)),
+              style: TextStyle(fontSize: 12, color: kMuted)),
         ],
       ),
     );
   }
 
-  Widget _bigIconButton({
-    required IconData icon,
-    required Color color,
-    required String tooltip,
+  /// 픽셀 그림 하나만 담은 네모 버튼
+  Widget _glyphButton({
+    required PixelGlyph glyph,
+    required Color fill,
+    required double cell,
+    required Size size,
     required VoidCallback? onPressed,
   }) {
-    return Tooltip(
-      message: tooltip,
-      child: InkWell(
+    final off = onPressed == null;
+    return SizedBox(
+      width: size.width,
+      height: size.height,
+      child: PixelCard(
+        fill: off ? kSteel : fill,
+        padding: EdgeInsets.zero,
         onTap: onPressed,
-        borderRadius: BorderRadius.circular(12),
-        child: Container(
-          width: 84,
-          height: 72,
-          decoration: BoxDecoration(
-            color: kCard,
-            borderRadius: BorderRadius.circular(12),
-            border: Border.all(color: kLine),
-          ),
-          child: Icon(icon,
-              size: 26, color: onPressed == null ? Colors.white24 : color),
-        ),
-      ),
-    );
-  }
-
-  /// 인풋박스 우측의 작은 아이콘 버튼 (목록이 하나라도 있을 때)
-  Widget _smallIconButton({
-    required IconData icon,
-    required Color color,
-    required String tooltip,
-    required VoidCallback? onPressed,
-  }) {
-    return Tooltip(
-      message: tooltip,
-      child: InkWell(
-        onTap: onPressed,
-        borderRadius: BorderRadius.circular(10),
-        child: Container(
-          width: 44,
-          height: 44,
-          decoration: BoxDecoration(
-            color: kCard,
-            borderRadius: BorderRadius.circular(10),
-            border: Border.all(color: kLine),
-          ),
-          child: Icon(icon,
-              size: 19, color: onPressed == null ? Colors.white24 : color),
+        child: Center(
+          child: PixelIcon(glyph,
+              cell: cell, color: off ? kMuted : kOnLight),
         ),
       ),
     );
@@ -857,66 +880,56 @@ class _TTSPageState extends State<TTSPage> {
         final selected = s.id == _selectedId;
         final isFile = s.kind == SourceKind.file;
 
-        return InkWell(
-          borderRadius: BorderRadius.circular(12),
+        // 고른 글만 노란 카드. 나머지는 가라앉혀 둔다.
+        final skin = selected ? kSkinPlaying : kSkinPending;
+
+        return PixelCard(
+          fill: skin.fill,
+          padding: const EdgeInsets.fromLTRB(12, 10, 8, 10),
           onTap: () => setState(() => _selectedId = s.id),
-          child: Container(
-            padding: const EdgeInsets.fromLTRB(12, 10, 6, 10),
-            decoration: BoxDecoration(
-              color: selected ? kPlay.withValues(alpha: 0.10) : kCard,
-              borderRadius: BorderRadius.circular(12),
-              border: Border.all(color: selected ? kPlay : kLine),
-            ),
-            child: Row(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Row(
-                        children: [
-                          Icon(
-                            isFile
-                                ? Icons.description_outlined
-                                : Icons.content_paste_rounded,
-                            size: 13,
-                            color: isFile ? kSynth : kPlay,
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        PixelIcon(isFile ? kGlyphFile : kGlyphPaste,
+                            cell: 1.8, color: skin.ink.withValues(alpha: 0.7)),
+                        const SizedBox(width: 6),
+                        Text(
+                          isFile ? '파일' : '붙여넣기',
+                          style: TextStyle(
+                            fontSize: 10,
+                            color: skin.ink.withValues(alpha: 0.7),
                           ),
-                          const SizedBox(width: 5),
-                          Text(
-                            isFile ? '파일' : '붙여넣기',
-                            style: const TextStyle(
-                                fontSize: 10, color: Colors.white38),
-                          ),
-                        ],
-                      ),
-                      const SizedBox(height: 4),
-                      Text(
-                        s.label,
-                        maxLines: 2, // 붙여넣기는 앞 두 줄, 파일은 파일명
-                        overflow: TextOverflow.ellipsis,
-                        style: TextStyle(
-                          fontSize: 12.5,
-                          height: 1.45,
-                          color: selected ? Colors.white : Colors.white70,
                         ),
+                      ],
+                    ),
+                    const SizedBox(height: 5),
+                    Text(
+                      s.label,
+                      maxLines: 2, // 붙여넣기는 앞 두 줄, 파일은 파일명
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        fontSize: 12.5,
+                        height: 1.45,
+                        color: skin.ink,
                       ),
-                    ],
-                  ),
+                    ),
+                  ],
                 ),
-                // 삭제 (확인 팝업 후 완전 삭제)
-                InkWell(
-                  onTap: () => _confirmDelete(s),
-                  borderRadius: BorderRadius.circular(6),
-                  child: const Padding(
-                    padding: EdgeInsets.all(6),
-                    child: Icon(Icons.close_rounded,
-                        size: 16, color: Colors.white38),
-                  ),
-                ),
-              ],
-            ),
+              ),
+              // 삭제 (확인 팝업 후 완전 삭제)
+              _pixelTap(
+                onTap: () => _confirmDelete(s),
+                padding: const EdgeInsets.all(6),
+                child: PixelIcon(kGlyphCross,
+                    cell: 2, color: skin.ink.withValues(alpha: 0.55)),
+              ),
+            ],
           ),
         );
       },
@@ -929,43 +942,43 @@ class _TTSPageState extends State<TTSPage> {
     return Row(
       children: [
         Expanded(
-          child: Container(
-            decoration: BoxDecoration(
-              color: kCard,
-              borderRadius: BorderRadius.circular(10),
-              border: Border.all(color: kLine),
-            ),
+          child: PixelCard(
+            fill: kSteel,
+            padding: EdgeInsets.zero,
             child: TextField(
               controller: _shortController,
               focusNode: _shortFocus,
               maxLines: 1,
               textInputAction: TextInputAction.done,
               onChanged: (_) => setState(() {}), // 버튼 문구를 바로 바꾸기 위해
-              style: const TextStyle(fontSize: 13),
+              cursorColor: kYellow,
+              style: const TextStyle(fontSize: 13, color: Colors.white),
               decoration: const InputDecoration(
                 isDense: true,
                 contentPadding:
-                    EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+                    EdgeInsets.symmetric(horizontal: 14, vertical: 14),
                 border: InputBorder.none,
                 hintText: '짧은 문장 바로 재생',
-                hintStyle: TextStyle(fontSize: 13, color: Colors.white24),
+                hintStyle: TextStyle(fontSize: 13, color: kOnSteel),
               ),
             ),
           ),
         ),
         if (_sources.isNotEmpty) ...[
           const SizedBox(width: 8),
-          _smallIconButton(
-            icon: Icons.content_paste_rounded,
-            color: kPlay,
-            tooltip: '붙여넣기',
+          _glyphButton(
+            glyph: kGlyphPaste,
+            fill: kSlate,
+            cell: 2.4,
+            size: const Size(46, 46),
             onPressed: _pasteFromClipboard,
           ),
           const SizedBox(width: 8),
-          _smallIconButton(
-            icon: Icons.note_add_outlined,
-            color: kSynth,
-            tooltip: '파일 추가',
+          _glyphButton(
+            glyph: kGlyphFile,
+            fill: kOlive,
+            cell: 2.4,
+            size: const Size(46, 46),
             onPressed: _pickingFile ? null : _pickFile,
           ),
         ],
@@ -984,75 +997,57 @@ class _TTSPageState extends State<TTSPage> {
     );
   }
 
-  // 재생중 번호 · 합성중 번호 · 대기열 숫자만 보여준다 (문장 미리보기·막대는 뺐다)
+  /// 재생중 번호 · 합성중 번호 · 대기열 숫자만 보여준다
   Widget _trackBoard() {
     final synthIdx = _engine.synthesizingIndex;
     final playIdx = _engine.currentIndex;
 
-    return Container(
-      padding: const EdgeInsets.all(12),
-      decoration: BoxDecoration(
-        color: kCard,
-        borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: kLine),
-      ),
+    return PixelCard(
+      fill: kSlate,
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
       child: Row(
         children: [
-          _trackRow(
-            label: '재생',
-            color: kPlay,
-            active: _engine.isPlaying && !_engine.isStalled,
-            index: playIdx,
+          _boardStat(
+            glyph: kGlyphPlay,
+            value: playIdx >= 0 ? '${playIdx + 1}' : '-',
+            dim: !(_engine.isPlaying && !_engine.isStalled),
           ),
-          const SizedBox(width: 20),
-          _trackRow(
-            label: '합성',
-            color: kSynth,
-            active: synthIdx >= 0,
-            index: synthIdx,
+          const SizedBox(width: 22),
+          _boardStat(
+            glyph: kGlyphDot,
+            value: synthIdx >= 0 ? '${synthIdx + 1}' : '-',
+            dim: synthIdx < 0,
           ),
           const Spacer(),
-          const Text('대기열',
-              style: TextStyle(fontSize: 11, color: Colors.white38)),
-          const SizedBox(width: 6),
-          Text('${_engine.readyCount}개',
-              style: const TextStyle(
-                fontSize: 13,
-                fontWeight: FontWeight.bold,
-                color: kSynth,
-              )),
+          _boardStat(
+            glyph: kGlyphCheck,
+            value: '${_engine.readyCount}',
+            dim: _engine.readyCount == 0,
+            iconLast: true,
+          ),
         ],
       ),
     );
   }
 
-  Widget _trackRow({
-    required String label,
-    required Color color,
-    required bool active,
-    required int index,
+  /// 대시보드의 숫자 한 칸 — 그림과 숫자 한 쌍
+  Widget _boardStat({
+    required PixelGlyph glyph,
+    required String value,
+    required bool dim,
+    bool iconLast = false,
   }) {
+    final ink = dim ? kOnLight.withValues(alpha: 0.35) : kOnLight;
+    final icon = PixelIcon(glyph, cell: 2.6, color: ink);
+    final text = Text(
+      value,
+      style: displayStyle(size: 18, color: ink, weight: FontWeight.w700),
+    );
     return Row(
       mainAxisSize: MainAxisSize.min,
-      children: [
-        Text(
-          label,
-          style: TextStyle(
-            fontSize: 11,
-            fontWeight: FontWeight.bold,
-            color: active ? color : Colors.white30,
-          ),
-        ),
-        const SizedBox(width: 6),
-        Text(
-          index >= 0 ? '#${index + 1}' : '-',
-          style: TextStyle(
-            fontSize: 13,
-            fontWeight: FontWeight.bold,
-            color: active ? color : Colors.white24,
-          ),
-        ),
-      ],
+      children: iconLast
+          ? [text, const SizedBox(width: 10), icon]
+          : [icon, const SizedBox(width: 10), text],
     );
   }
 
@@ -1091,51 +1086,45 @@ class _TTSPageState extends State<TTSPage> {
               _extentFor(index, constraints.maxWidth),
           itemBuilder: (context, i) {
           final it = items[i];
-          final isCurrent = it.status == SentenceStatus.playing;
+          // 카드 색이 곧 상태다 — 어두운 데서 시작해 밝아졌다가 다시 가라앉는다
+          final skin = skinFor(it.status);
 
           return Padding(
             padding: const EdgeInsets.only(bottom: _itemGap),
-            child: InkWell(
-              borderRadius: BorderRadius.circular(12),
-              // 문장을 누르면 그 지점부터 읽고, 뒤 문장들을 이어서 합성한다
+            // 문장을 누르면 그 지점부터 읽고, 뒤 문장들을 이어서 합성한다
+            child: PixelCard(
+              fill: skin.fill,
+              padding: const EdgeInsets.symmetric(
+                  horizontal: _itemSidePadding, vertical: _itemVerticalPadding / 2),
               onTap: () {
                 _lastScrolledIndex = i;
                 _engine.seekToUnit(i);
               },
-              child: Container(
-                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                decoration: BoxDecoration(
-                  color: isCurrent ? kPlay.withValues(alpha: 0.10) : kCard,
-                  borderRadius: BorderRadius.circular(12),
-                  border: Border.all(color: isCurrent ? kPlay : kLine),
-                ),
-                child: Row(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Padding(
-                      padding: const EdgeInsets.only(top: 2),
-                      child: StatusIcon(it.status),
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Padding(
+                    padding: const EdgeInsets.only(top: 3),
+                    child: StatusIcon(it.status,
+                        color: skin.ink, cell: _iconCell),
+                  ),
+                  const SizedBox(width: _iconGap),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          it.text, // 줄임 없이 전체를 보여준다
+                          style: _bodyStyle.copyWith(color: skin.ink),
+                        ),
+                        // 셀 번호 — 본문 아래 한 줄, 좌측
+                        Text('${i + 1}',
+                            style: _numberStyle.copyWith(
+                                color: skin.ink.withValues(alpha: 0.45))),
+                      ],
                     ),
-                    const SizedBox(width: 10),
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            it.text, // 줄임 없이 전체를 보여준다
-                            style: _bodyStyle.copyWith(
-                              color: it.status == SentenceStatus.done
-                                  ? Colors.white30
-                                  : Colors.white70,
-                            ),
-                          ),
-                          // 셀 번호 — 본문 아래 한 줄, 좌측
-                          Text('${i + 1}', style: _numberStyle),
-                        ],
-                      ),
-                    ),
-                  ],
-                ),
+                  ),
+                ],
               ),
             ),
           );
@@ -1152,62 +1141,76 @@ class _TTSPageState extends State<TTSPage> {
       // 인풋박스에 글자가 있으면 그것만, 없으면 선택된 셀을 읽는다
       final canStart = _ready && (hasShort || _selectedSource != null);
 
-      return SizedBox(
-        height: 54,
-        child: FilledButton(
-          style: FilledButton.styleFrom(backgroundColor: kAccent),
-          onPressed: canStart ? _start : null,
-          child: Text(
-            !_ready
-                ? '준비 중...'
-                : hasShort
-                    ? '단문 재생'
-                    : '읽어주기',
-            style: const TextStyle(fontSize: 17, fontWeight: FontWeight.bold),
+      return Row(
+        children: [
+          _wordAction(
+            label: !_ready ? 'LOADING' : (hasShort ? 'SAY' : 'PLAY'),
+            size: 34,
+            weight: FontWeight.w700,
+            onTap: canStart ? _start : null,
           ),
-        ),
+          const Spacer(),
+        ],
       );
     }
 
     return Row(
+      crossAxisAlignment: CrossAxisAlignment.center,
       children: [
-        Expanded(
-          flex: 2,
-          child: FilledButton(
-            style: FilledButton.styleFrom(
-              backgroundColor: kAccent,
-              padding: const EdgeInsets.symmetric(vertical: 14),
-            ),
-            onPressed: _togglePause,
-            child: Text(
-              _engine.isPlaying ? '일시정지' : '이어듣기',
-              style: const TextStyle(fontSize: 15, fontWeight: FontWeight.bold),
-            ),
-          ),
+        _wordAction(
+          label: _engine.isPlaying ? 'PAUSE' : 'PLAY',
+          size: 34,
+          weight: FontWeight.w700,
+          onTap: _togglePause,
         ),
-        const SizedBox(width: 8),
-        SizedBox(
-          width: 70,
-          child: OutlinedButton(
-            style: OutlinedButton.styleFrom(
-              padding: const EdgeInsets.symmetric(vertical: 14),
-              foregroundColor: kAccent,
-            ),
-            onPressed: _stop,
-            child: const Text('정지'),
-          ),
-        ),
+        const Spacer(),
+        _wordAction(label: 'STOP', onTap: _stop),
       ],
+    );
+  }
+
+  /// 테두리도 배경도 없이 글자만 놓는 버튼. 크기로 주·부를 가른다.
+  Widget _wordAction({
+    required String label,
+    required VoidCallback? onTap,
+    double size = 23,
+    FontWeight weight = FontWeight.w500,
+  }) {
+    return GestureDetector(
+      behavior: HitTestBehavior.opaque,
+      onTap: onTap,
+      child: Padding(
+        padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 4),
+        child: Text(
+          label,
+          style: displayStyle(
+            size: size,
+            color: onTap == null ? kSteel : kYellow,
+            weight: weight,
+            letterSpacing: 1.5,
+          ),
+        ),
+      ),
     );
   }
 
   InputDecoration _dec(String label) => InputDecoration(
         labelText: label,
+        labelStyle: const TextStyle(color: kOnSteel, fontSize: 13),
         filled: true,
         fillColor: kBg,
-        border: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(10),
-          borderSide: const BorderSide(color: kLine),
+        // 픽셀 화면에서는 둥근 모서리를 쓰지 않는다
+        border: const OutlineInputBorder(
+          borderRadius: BorderRadius.zero,
+          borderSide: BorderSide(color: kLine),
+        ),
+        enabledBorder: const OutlineInputBorder(
+          borderRadius: BorderRadius.zero,
+          borderSide: BorderSide(color: kLine),
+        ),
+        focusedBorder: const OutlineInputBorder(
+          borderRadius: BorderRadius.zero,
+          borderSide: BorderSide(color: kYellow),
         ),
       );
 
@@ -1216,20 +1219,28 @@ class _TTSPageState extends State<TTSPage> {
     return Row(
       children: [
         SizedBox(
-            width: 40, child: Text(label, style: const TextStyle(fontSize: 13))),
+            width: 40,
+            child: Text(label,
+                style: const TextStyle(fontSize: 13, color: Colors.white))),
         Expanded(
-          child: Slider(
-              value: v,
-              min: min,
-              max: max,
-              activeColor: kAccent,
-              onChanged: onChanged),
+          child: SliderTheme(
+            data: SliderTheme.of(context).copyWith(
+              trackHeight: 4,
+              activeTrackColor: kYellow,
+              inactiveTrackColor: kSteel,
+              thumbColor: kYellow,
+              overlayColor: kYellow.withValues(alpha: 0.14),
+              thumbShape: const PixelThumbShape(),
+              trackShape: const RectangularSliderTrackShape(),
+            ),
+            child: Slider(value: v, min: min, max: max, onChanged: onChanged),
+          ),
         ),
         SizedBox(
-          width: 42,
+          width: 46,
           child: Text(value,
               textAlign: TextAlign.right,
-              style: const TextStyle(fontSize: 12, color: kAccent)),
+              style: displayStyle(size: 13, color: kYellow)),
         ),
       ],
     );

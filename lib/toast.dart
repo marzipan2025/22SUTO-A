@@ -1,11 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
-
-// status_icon.dart 처럼 이 파일에서 쓰는 색은 여기에 둔다.
-// main.dart 의 kCard·kLine 과 같은 값이다.
-const _kToastBg = Color(0xFF1A2129);
-const _kToastLine = Color(0xFF2A3441);
+import 'package:suto_a/theme.dart';
 
 const _kEnter = Duration(milliseconds: 240);
 const _kExit = Duration(milliseconds: 180);
@@ -116,22 +112,11 @@ class _ToastState extends State<_Toast> with SingleTickerProviderStateMixin {
               color: Colors.transparent,
               child: GestureDetector(
                 onTap: _leave,
-                child: Container(
+                child: PixelCard(
+                  fill: kSlate,
                   padding: const EdgeInsets.symmetric(
                     horizontal: 14,
                     vertical: 9,
-                  ),
-                  decoration: BoxDecoration(
-                    color: _kToastBg,
-                    borderRadius: BorderRadius.circular(12),
-                    border: Border.all(color: _kToastLine),
-                    boxShadow: const [
-                      BoxShadow(
-                        color: Color(0x73000000),
-                        blurRadius: 18,
-                        offset: Offset(0, 6),
-                      ),
-                    ],
                   ),
                   child: Text(
                     widget.message,
@@ -139,9 +124,10 @@ class _ToastState extends State<_Toast> with SingleTickerProviderStateMixin {
                     maxLines: 2,
                     overflow: TextOverflow.ellipsis,
                     style: const TextStyle(
-                      color: Color(0xFFE8EDF2),
+                      color: kOnLight,
                       fontSize: 13.5,
                       height: 1.3,
+                      fontWeight: FontWeight.w600,
                     ),
                   ),
                 ),

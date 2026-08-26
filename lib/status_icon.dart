@@ -1,23 +1,40 @@
-import 'dart:math' as math;
-
 import 'package:flutter/material.dart';
 import 'package:suto_a/narration_engine.dart';
+import 'package:suto_a/pixel.dart';
+import 'package:suto_a/theme.dart';
 
-const kIconDim = Color(0x2EFFFFFF);
-const kIconNeutral = Color(0xFFB9C4CF);
-const kIconPlaying = Color(0xFF4DA3FF); // 파란색은 "지금 재생 중"에만
-const kIconFail = Color(0xFFFF7676);
+/// 문장 상태에 맞는 카드 색 한 벌.
+CardSkin skinFor(SentenceStatus status) {
+  switch (status) {
+    case SentenceStatus.pending:
+      return kSkinPending;
+    case SentenceStatus.synthesizing:
+      return kSkinSynth;
+    case SentenceStatus.ready:
+      return kSkinReady;
+    case SentenceStatus.playing:
+      return kSkinPlaying;
+    case SentenceStatus.done:
+      return kSkinDone;
+    case SentenceStatus.failed:
+      return kSkinFailed;
+  }
+}
 
-/// 문장 상태 아이콘.
+/// 문장 상태 아이콘 — 전부 격자 위에 찍는다.
 ///
-/// 대기: 흐린 빈 원 · 합성중: 차오르는 파이
-/// 준비됨: 꽉 찬 원 + 재생 삼각형 · 재생중: 그 파란색 버전
-/// 완료: 체크 · 실패: X
+/// 대기: 작은 점 · 합성 중: 깜박이는 덩어리 · 준비됨/재생 중: 삼각형
+/// 완료: 체크 · 실패: 가위표
+///
+/// 카드 색이 상태를 이미 말해 주므로, 아이콘은 카드 글자색을 그대로 쓴다.
 class StatusIcon extends StatefulWidget {
-  const StatusIcon(this.status, {super.key, this.size = 20});
+  const StatusIcon(this.status, {super.key, required this.color, this.cell = 2});
 
   final SentenceStatus status;
-  final double size;
+  final Color color;
+
+  /// 격자 한 칸의 크기
+  final double cell;
 
   @override
   State<StatusIcon> createState() => _StatusIconState();
@@ -45,8 +62,8 @@ class _StatusIconState extends State<StatusIcon>
     if (_animated) {
       _controller ??= AnimationController(
         vsync: this,
-        duration: const Duration(milliseconds: 2000),
-      )..repeat();
+        duration: const Duration(milliseconds: 900),
+      )..repeat(reverse: true);
     } else {
       _controller?.dispose();
       _controller = null;
@@ -59,117 +76,38 @@ class _StatusIconState extends State<StatusIcon>
     super.dispose();
   }
 
+  PixelGlyph get _glyph {
+    switch (widget.status) {
+      case SentenceStatus.pending:
+        return kGlyphTick;
+      case SentenceStatus.synthesizing:
+        return kGlyphDot;
+      case SentenceStatus.ready:
+      case SentenceStatus.playing:
+        return kGlyphPlay;
+      case SentenceStatus.done:
+        return kGlyphCheck;
+      case SentenceStatus.failed:
+        return kGlyphCross;
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
-    if (_controller == null) {
-      return CustomPaint(
-        size: Size.square(widget.size),
-        painter: _StatusPainter(widget.status, 0),
-      );
-    }
-    // 합성 중일 때만 천천히 점멸한다 (그 외에는 다시 그리지 않는다)
-    return AnimatedBuilder(
-      animation: _controller!,
-      builder: (_, __) => CustomPaint(
-        size: Size.square(widget.size),
-        painter: _StatusPainter(widget.status, _controller!.value),
-      ),
+    final icon = PixelIcon(_glyph, cell: widget.cell, color: widget.color);
+
+    // 자리를 항상 같은 크기로 잡아 둔다 — 상태가 바뀌어도 글이 밀리지 않는다.
+    final boxed = SizedBox(
+      width: kGlyphPlay.cols * widget.cell + widget.cell * 2,
+      height: kGlyphPlay.lines * widget.cell,
+      child: Align(alignment: Alignment.centerLeft, child: icon),
+    );
+
+    if (_controller == null) return boxed;
+    // 만드는 중일 때만 천천히 깜박인다
+    return FadeTransition(
+      opacity: Tween<double>(begin: 0.35, end: 1.0).animate(_controller!),
+      child: boxed,
     );
   }
-}
-
-class _StatusPainter extends CustomPainter {
-  _StatusPainter(this.status, this.phase);
-
-  final SentenceStatus status;
-
-  /// 점멸 위상 (0~1)
-  final double phase;
-
-  @override
-  void paint(Canvas canvas, Size size) {
-    final c = Offset(size.width / 2, size.height / 2);
-    final r = size.width / 2 - 1;
-
-    switch (status) {
-      case SentenceStatus.pending:
-        _ring(canvas, c, r, kIconDim);
-        break;
-
-      case SentenceStatus.synthesizing:
-        _ring(canvas, c, r, const Color(0x20FFFFFF));
-        // 천천히 점멸하는 원 (계산 없이 크기·투명도만 바뀐다)
-        final wave = (1 - math.cos(phase * 2 * math.pi)) / 2; // 0 → 1 → 0
-        canvas.drawCircle(
-          c,
-          r * (0.66 + 0.34 * wave),
-          Paint()..color = kIconNeutral.withValues(alpha: 0.25 + 0.75 * wave),
-        );
-        break;
-
-      case SentenceStatus.ready:
-        _disc(canvas, c, r, kIconNeutral);
-        _triangle(canvas, c, r);
-        break;
-
-      case SentenceStatus.playing:
-        _disc(canvas, c, r, kIconPlaying);
-        _triangle(canvas, c, r);
-        break;
-
-      case SentenceStatus.done:
-        _ring(canvas, c, r, kIconDim);
-        final p = Paint()
-          ..color = const Color(0x40FFFFFF)
-          ..style = PaintingStyle.stroke
-          ..strokeWidth = 1.8
-          ..strokeCap = StrokeCap.round
-          ..strokeJoin = StrokeJoin.round;
-        final path = Path()
-          ..moveTo(c.dx - r * 0.42, c.dy + r * 0.03)
-          ..lineTo(c.dx - r * 0.12, c.dy + r * 0.32)
-          ..lineTo(c.dx + r * 0.44, c.dy - r * 0.30);
-        canvas.drawPath(path, p);
-        break;
-
-      case SentenceStatus.failed:
-        _ring(canvas, c, r, kIconFail);
-        final p = Paint()
-          ..color = kIconFail
-          ..strokeWidth = 1.6
-          ..strokeCap = StrokeCap.round;
-        final d = r * 0.42;
-        canvas.drawLine(c + Offset(-d, -d), c + Offset(d, d), p);
-        canvas.drawLine(c + Offset(d, -d), c + Offset(-d, d), p);
-        break;
-    }
-  }
-
-  void _ring(Canvas canvas, Offset c, double r, Color color) {
-    canvas.drawCircle(
-      c,
-      r,
-      Paint()
-        ..color = color
-        ..style = PaintingStyle.stroke
-        ..strokeWidth = 1.4,
-    );
-  }
-
-  void _disc(Canvas canvas, Offset c, double r, Color color) {
-    canvas.drawCircle(c, r, Paint()..color = color);
-  }
-
-  void _triangle(Canvas canvas, Offset c, double r) {
-    final path = Path()
-      ..moveTo(c.dx - r * 0.22, c.dy - r * 0.36)
-      ..lineTo(c.dx + r * 0.40, c.dy)
-      ..lineTo(c.dx - r * 0.22, c.dy + r * 0.36)
-      ..close();
-    canvas.drawPath(path, Paint()..color = const Color(0xFF1A2129));
-  }
-
-  @override
-  bool shouldRepaint(_StatusPainter old) =>
-      old.status != status || old.phase != phase;
 }

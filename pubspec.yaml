@@ -30,3 +30,16 @@ flutter:
   assets:
     - assets/onnx/
     - assets/voice_styles/
+  fonts:
+    # Panchang (Indian Type Foundry, Fontshare) — 숫자·영문 표시용.
+    # 한글 자형이 없어 본문에는 쓰지 않는다.
+    - family: Panchang
+      fonts:
+        - asset: assets/fonts/Panchang-Regular.otf
+          weight: 400
+        - asset: assets/fonts/Panchang-Medium.otf
+          weight: 500
+        - asset: assets/fonts/Panchang-Semibold.otf
+          weight: 600
+        - asset: assets/fonts/Panchang-Bold.otf
+          weight: 700

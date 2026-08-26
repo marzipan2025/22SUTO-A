@@ -30,6 +30,9 @@ android {
             // TODO: Add your own signing config for the release build.
             // Signing with the debug keys for now, so `flutter run --release` works.
             signingConfig = signingConfigs.getByName("debug")
+            // ONNX Runtime 이 JNI 로 찾는 클래스 이름을 R8 이 줄이지 않게 한다
+            // (자세한 사정은 proguard-rules.pro 에)
+            proguardFiles("proguard-rules.pro")
         }
     }
 }

@@ -92,8 +92,9 @@ class PixelCard extends StatelessWidget {
   }
 }
 
-/// 코레일체 — 본문 기본 글꼴. 한글이 들어가는 자리는 전부 이걸 쓴다.
-const kBodyFamily = 'Korail';
+/// JTBC 고딕 Light — 본문 기본 글꼴. 한글이 들어가는 자리는 전부 이걸 쓴다.
+/// 무게는 이 한 벌뿐이라, 굵게 부른 자리는 기기가 흉내 내 그린다.
+const kBodyFamily = 'JTBC';
 
 /// Panchang 대문자의 실제 캡 하이트 비율.
 ///

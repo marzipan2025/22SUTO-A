@@ -1,7 +1,7 @@
 name: suto_a
 description: "22SUTO-A — Supertonic 3 on-device TTS for Android"
 publish_to: 'none'
-version: 0.0.7+7
+version: 0.0.8+8
 
 environment:
   sdk: ^3.5.0
@@ -31,16 +31,14 @@ flutter:
     - assets/onnx/
     - assets/voice_styles/
   fonts:
-    # 코레일체 — 본문 기본 글꼴.
-    # 본문은 Light 로 읽는다. 그래서 Light 를 400(기본 무게) 자리에 앉혔다.
-    - family: Korail
+    # JTBC 고딕 — 본문 기본 글꼴.
+    # 이 맥에 깔린 JTBC 중 가장 가벼운 Light(usWeightClass 300) 한 벌만 쓴다.
+    # 본문은 Light 로 읽으므로 그 한 벌을 400(기본 무게) 자리에 앉혔다.
+    # 더 굵은 무게를 부르면 기기가 이 자형을 굵게 흉내 내 그린다.
+    - family: JTBC
       fonts:
-        - asset: assets/fonts/Korail-Light.ttf
+        - asset: assets/fonts/JTBCGothic-Light.ttf
           weight: 400
-        - asset: assets/fonts/Korail-Medium.ttf
-          weight: 500
-        - asset: assets/fonts/Korail-Bold.ttf
-          weight: 700
     # Panchang (Indian Type Foundry, Fontshare) — 숫자·영문 표시용.
     # 한글 자형이 없어 본문에는 쓰지 않는다.
     - family: Panchang

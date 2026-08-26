@@ -31,6 +31,16 @@ flutter:
     - assets/onnx/
     - assets/voice_styles/
   fonts:
+    # 코레일체 — 본문 기본 글꼴.
+    # 본문은 Light 로 읽는다. 그래서 Light 를 400(기본 무게) 자리에 앉혔다.
+    - family: Korail
+      fonts:
+        - asset: assets/fonts/Korail-Light.ttf
+          weight: 400
+        - asset: assets/fonts/Korail-Medium.ttf
+          weight: 500
+        - asset: assets/fonts/Korail-Bold.ttf
+          weight: 700
     # Panchang (Indian Type Foundry, Fontshare) — 숫자·영문 표시용.
     # 한글 자형이 없어 본문에는 쓰지 않는다.
     - family: Panchang

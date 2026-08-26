@@ -92,6 +92,9 @@ class PixelCard extends StatelessWidget {
   }
 }
 
+/// 코레일체 — 본문 기본 글꼴. 한글이 들어가는 자리는 전부 이걸 쓴다.
+const kBodyFamily = 'Korail';
+
 /// Panchang — 숫자와 영문 보조 글자에 쓴다.
 /// 한글 자형이 없으므로 본문에는 절대 물리지 않는다.
 const kDisplayFamily = 'Panchang';
@@ -141,4 +144,74 @@ class PixelThumbShape extends SliderComponentShape {
       Paint()..color = sliderTheme.thumbColor ?? kYellow,
     );
   }
+}
+
+/// 굴러가는 목록의 위아래 끝을 픽셀 모서리로 물어내는 덮개.
+///
+/// 목록은 뷰포트 끝에서 카드를 일자로 잘라 버린다. 그러면 잘린 자리만
+/// 각지지 않은 채 남아, 굴리는 동안 계단 모서리가 거기서만 끊긴다.
+/// 잘리는 네 귀퉁이에 배경색으로 [PixelBorder]와 똑같은 계단을 덧그려,
+/// 어디까지 굴려도 끝이 물려 나간 것처럼 보이게 한다.
+///
+/// 덮개는 손가락을 가로막지 않는다 — 밑의 목록이 그대로 눌린다.
+class PixelScrollMask extends StatelessWidget {
+  const PixelScrollMask({
+    super.key,
+    required this.child,
+    this.unit = kPixelUnit,
+    this.steps = 2,
+    this.color = kBg,
+  });
+
+  final Widget child;
+
+  /// 계단 한 칸의 크기 — 카드와 같은 눈금을 써야 이가 맞는다
+  final double unit;
+  final int steps;
+
+  /// 덧그릴 색. 카드 뒤에 깔린 바탕과 같아야 한다.
+  final Color color;
+
+  @override
+  Widget build(BuildContext context) {
+    return Stack(
+      children: [
+        child,
+        Positioned.fill(
+          child: IgnorePointer(
+            child: CustomPaint(
+              painter: _ScrollMaskPainter(unit, steps, color),
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _ScrollMaskPainter extends CustomPainter {
+  _ScrollMaskPainter(this.unit, this.steps, this.color);
+
+  final double unit;
+  final int steps;
+  final Color color;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final p = Paint()..color = color;
+    for (var i = 0; i < steps; i++) {
+      // 끝에서 i번째 줄에서 물어낼 폭 — 안쪽으로 갈수록 좁아진다
+      final w = (steps - i) * unit;
+      final top = i * unit;
+      final bottom = size.height - (i + 1) * unit;
+      for (final y in [top, bottom]) {
+        canvas.drawRect(Rect.fromLTWH(0, y, w, unit), p);
+        canvas.drawRect(Rect.fromLTWH(size.width - w, y, w, unit), p);
+      }
+    }
+  }
+
+  @override
+  bool shouldRepaint(_ScrollMaskPainter old) =>
+      old.unit != unit || old.steps != steps || old.color != color;
 }

@@ -39,6 +39,7 @@ class SutoApp extends StatelessWidget {
       debugShowCheckedModeBanner: false,
       theme: ThemeData(
         brightness: Brightness.dark,
+        fontFamily: kBodyFamily,
         scaffoldBackgroundColor: kBg,
         canvasColor: kBg,
         colorScheme: ColorScheme.fromSeed(
@@ -787,13 +788,16 @@ class _TTSPageState extends State<TTSPage> {
     return Column(
       mainAxisSize: MainAxisSize.min,
       children: [
-        Text(
-          word,
-          style: displayStyle(
-            size: 12,
-            color: _engine.error != null ? kRed : kYellow,
-            weight: FontWeight.w600,
-            letterSpacing: 2.4,
+        Padding(
+          padding: const EdgeInsets.only(top: 4),
+          child: Text(
+            word,
+            style: displayStyle(
+              size: 12,
+              color: _engine.error != null ? kRed : kYellow,
+              weight: FontWeight.w600,
+              letterSpacing: 2.4,
+            ),
           ),
         ),
         const SizedBox(height: 5),
@@ -871,7 +875,8 @@ class _TTSPageState extends State<TTSPage> {
 
   /// 추가된 소스 목록 — 위에서부터 쌓인다. 항상 하나가 선택 상태.
   Widget _sourceList() {
-    return ListView.separated(
+    return PixelScrollMask(
+      child: ListView.separated(
       padding: EdgeInsets.zero,
       itemCount: _sources.length,
       separatorBuilder: (_, __) => const SizedBox(height: 8),
@@ -933,6 +938,7 @@ class _TTSPageState extends State<TTSPage> {
           ),
         );
       },
+      ),
     );
   }
 
@@ -1078,7 +1084,8 @@ class _TTSPageState extends State<TTSPage> {
       }
       return NotificationListener<UserScrollNotification>(
         onNotification: _onScrollNotification,
-        child: ListView.builder(
+        child: PixelScrollMask(
+          child: ListView.builder(
           controller: _listController,
           itemCount: items.length,
           // 문장마다 높이가 다르므로 각각 계산해 넘긴다 (스크롤이 정확해진다)
@@ -1129,6 +1136,7 @@ class _TTSPageState extends State<TTSPage> {
             ),
           );
         },
+          ),
         ),
       );
     });

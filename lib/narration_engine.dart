@@ -56,7 +56,9 @@ class NarrationEngine extends ChangeNotifier {
   ///
   /// 44.1kHz 모노 16bit WAV라 한 개가 대략 1MB 안팎이므로,
   /// 글 하나당 10MB 정도를 들고 있는 셈이다.
-  static const keepOnPark = 10;
+  /// 만들어둔 음성을 모두 합쳐 이만큼까지만 들고 있는다.
+  /// 넘으면 오래전에 넣은 글부터 음성을 버린다 (글 자체는 남는다).
+  static const voiceLimitBytes = 5 * 1024 * 1024 * 1024; // 5GB
 
   /// 지금 읽고 있는 글의 id
   String? _sourceId;
@@ -225,8 +227,11 @@ class NarrationEngine extends ChangeNotifier {
     unawaited(_pump(gen));
   }
 
-  /// 재생을 멈추되 **음성 파일은 지우지 않고** 현재 위치 주변만 남긴다.
-  /// 다른 글로 옮겨갈 때와 정지 버튼을 눌렀을 때 모두 이걸 쓴다.
+  /// 재생을 멈춘다. **만들어둔 음성은 그대로 둔다.**
+  ///
+  /// 전에는 현재 위치 주변 열 개만 남기고 버렸다. 그러면 나갔다 들어올 때마다
+  /// 처음부터 다시 만들어야 했다. 한 문장이 0.7MB 뿐이고, 다시 만드는 값이
+  /// 훨씬 비싸다. 총량은 [voiceLimitBytes] 로 묶어 둔다.
   Future<void> park() async {
     _generation++;
     _running = false;
@@ -241,32 +246,18 @@ class NarrationEngine extends ChangeNotifier {
 
     final id = _sourceId;
     if (id != null && _items.isNotEmpty) {
-      _parkedFiles[id] = _trimToWindow(_currentIndex, keepOnPark);
+      _parkedFiles[id] = _keptFiles();
     }
     _setStatus('정지했어요.');
   }
 
-  /// [from]부터 [count]개만 남기고 나머지 음성 파일을 지운다.
-  /// 남긴 것들의 (문장 번호 → 경로)를 돌려준다.
-  Map<int, String> _trimToWindow(int from, int count) {
+  /// 지금 남아 있는 음성 파일들의 (문장 번호 → 경로).
+  /// 다시 이 글로 들어왔을 때 어디까지 만들어 뒀는지 알려 주는 표다.
+  Map<int, String> _keptFiles() {
     final keep = <int, String>{};
-    final lo = from < 0 ? 0 : from;
-    final hi = lo + count;
     for (var i = 0; i < _items.length; i++) {
       final p = _items[i].filePath;
-      if (p == null) continue;
-      if (i >= lo && i < hi && File(p).existsSync()) {
-        keep[i] = p;
-        continue;
-      }
-      _items[i].filePath = null;
-      if (_items[i].status == SentenceStatus.ready) {
-        _items[i].status = SentenceStatus.pending;
-      }
-      try {
-        final f = File(p);
-        if (f.existsSync()) f.deleteSync();
-      } catch (_) {}
+      if (p != null && File(p).existsSync()) keep[i] = p;
     }
     return keep;
   }
@@ -551,7 +542,6 @@ class NarrationEngine extends ChangeNotifier {
     }
     _currentIndex = index;
     _stalled = false;
-    _deleteOldFiles(index);
     onSentenceChanged?.call(_items[index]);
     _setStatus('재생 중 (${index + 1}/${_items.length})');
   }
@@ -570,52 +560,106 @@ class NarrationEngine extends ChangeNotifier {
         : '끝났어요 (${_items.length}문장 중 $failed개 실패)');
   }
 
-  /// 오래 지난 음성 파일은 지운다. '이전' 버튼을 위해 최근 몇 개는 남겨둔다.
-  void _deleteOldFiles(int currentIndex) {
-    for (var i = 0; i < currentIndex - 5; i++) {
-      final p = _items[i].filePath;
-      if (p == null) continue;
-      _items[i].filePath = null;
-      try {
-        final f = File(p);
-        if (f.existsSync()) f.deleteSync();
-      } catch (_) {}
-    }
-  }
-
   /// 글마다 고정된 폴더를 쓴다. 그래야 다른 글에 갔다 와도 파일이 그대로 있다.
+  ///
+  /// 캐시가 아니라 문서 폴더에 둔다. 안드로이드는 저장 공간이 모자라면
+  /// 캐시를 묻지도 않고 지운다 — 애써 만든 음성이 어느 날 사라져 있으면
+  /// 안 버리는 뜻이 없다.
   Future<Directory> _sessionDirFor(String sourceId, {bool create = true}) async {
-    final base = await getTemporaryDirectory();
-    final dir = Directory('${base.path}/suto_$sourceId');
+    final dir = Directory('${await _voiceRootPath()}/$sourceId');
     if (create && !dir.existsSync()) dir.createSync(recursive: true);
     return dir;
   }
 
-  /// 앱을 켤 때 정리 — 목록에 없는 글의 폴더는 통째로 지우고,
-  /// 남은 폴더에서는 [keepPaths]에 든 파일(각 글의 마지막 재생 위치)만 남긴다.
-  static Future<void> cleanupTemp({
-    required Set<String> keepSourceIds,
-    required Set<String> keepPaths,
+  static Future<String> _voiceRootPath() async =>
+      '${(await getApplicationDocumentsDirectory()).path}/voice';
+
+  /// 앱을 켤 때 정리.
+  ///
+  /// 목록에서 없어진 글의 음성은 통째로 버린다. **남아 있는 글의 음성은
+  /// 손대지 않는다** — 다시 들어갔을 때 곧바로 들리게 하려고 남겨두는 것이다.
+  ///
+  /// 다만 끝없이 늘 수는 없으므로 총량이 [voiceLimitBytes] 를 넘으면
+  /// [oldestFirst] 순서대로, 즉 오래전에 넣은 글부터 음성을 버린다.
+  /// [inUseSourceId] 는 지금 고른 글이라 마지막까지 남긴다.
+  static Future<void> pruneVoice({
+    required List<String> oldestFirst,
+    String? inUseSourceId,
+    int limitBytes = voiceLimitBytes,
   }) async {
     try {
-      final base = await getTemporaryDirectory();
-      for (final entry in base.listSync()) {
-        if (entry is! Directory) continue;
-        final name = entry.path.split('/').last;
-        if (!name.startsWith('suto_')) continue;
+      await _sweepLegacyCache();
 
-        final id = name.substring(5);
-        if (!keepSourceIds.contains(id)) {
+      final root = Directory(await _voiceRootPath());
+      if (!root.existsSync()) return;
+
+      final live = oldestFirst.toSet();
+      final sizes = <String, int>{};
+      for (final entry in root.listSync()) {
+        if (entry is! Directory) continue;
+        final id = entry.path.split('/').last;
+        if (!live.contains(id)) {
           entry.deleteSync(recursive: true);
           continue;
         }
-        for (final f in entry.listSync()) {
-          if (f is File && !keepPaths.contains(f.path)) f.deleteSync();
-        }
+        sizes[id] = _dirBytes(entry);
+      }
+
+      var total = sizes.values.fold<int>(0, (a, b) => a + b);
+      if (total <= limitBytes) return;
+
+      for (final id in oldestFirst) {
+        if (total <= limitBytes) break;
+        if (id == inUseSourceId) continue;
+        final bytes = sizes[id];
+        if (bytes == null || bytes == 0) continue;
+        try {
+          Directory('${root.path}/$id').deleteSync(recursive: true);
+          total -= bytes;
+          logger.i('음성 상한을 넘어 오래된 글의 음성을 버렸다: $id');
+        } catch (_) {}
       }
     } catch (e, st) {
-      logger.e('임시 폴더 정리 실패', error: e, stackTrace: st);
+      logger.e('음성 폴더 정리 실패', error: e, stackTrace: st);
     }
+  }
+
+  /// 만들어둔 음성이 지금 몇 바이트인지
+  static Future<int> voiceBytes() async {
+    final root = Directory(await _voiceRootPath());
+    if (!root.existsSync()) return 0;
+    return _dirBytes(root);
+  }
+
+  /// 만들어둔 음성을 전부 버린다 (글은 남는다)
+  static Future<void> clearVoice() async {
+    final root = Directory(await _voiceRootPath());
+    if (root.existsSync()) root.deleteSync(recursive: true);
+  }
+
+  static int _dirBytes(Directory dir) {
+    var sum = 0;
+    for (final f in dir.listSync(recursive: true)) {
+      if (f is File) {
+        try {
+          sum += f.lengthSync();
+        } catch (_) {}
+      }
+    }
+    return sum;
+  }
+
+  /// 예전에는 음성을 캐시에 뒀다. 옮긴 뒤 남은 것들을 한 번 걷어낸다.
+  static Future<void> _sweepLegacyCache() async {
+    try {
+      final base = await getTemporaryDirectory();
+      for (final entry in base.listSync()) {
+        if (entry is Directory &&
+            entry.path.split('/').last.startsWith('suto_')) {
+          entry.deleteSync(recursive: true);
+        }
+      }
+    } catch (_) {}
   }
 
   void _setStatus(String s) {

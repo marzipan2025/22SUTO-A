@@ -64,7 +64,7 @@ class TTSPage extends StatefulWidget {
   State<TTSPage> createState() => _TTSPageState();
 }
 
-class _TTSPageState extends State<TTSPage> {
+class _TTSPageState extends State<TTSPage> with WidgetsBindingObserver {
   /// 하단 인풋박스 — 셀이 되지 않는 일회성 단문 재생 칸.
   /// 여기에 한 글자라도 있으면 선택된 셀보다 우선한다.
   final _shortController = TextEditingController();
@@ -155,6 +155,10 @@ class _TTSPageState extends State<TTSPage> {
   bool _updateToastShown = false;
   bool _showList = false; // 입력 화면 ↔ 진행 화면
   bool _pickingFile = false;
+  Timer? _pickWatchdog;
+
+  /// 만들어둔 음성이 차지하는 크기 (설정에서 보여준다)
+  int? _voiceBytes;
   String? _menuHint;
 
   static const _voiceNames = {
@@ -168,6 +172,7 @@ class _TTSPageState extends State<TTSPage> {
     _engine.addListener(_onEngineChanged);
     _engine.onSentenceChanged = _onSentenceChanged;
     _playback.setMethodCallHandler(_onPlaybackCall);
+    WidgetsBinding.instance.addObserver(this);
     _boot();
     _initShareIntent();
     _checkUpdateOnLaunch();
@@ -175,6 +180,8 @@ class _TTSPageState extends State<TTSPage> {
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    _pickWatchdog?.cancel();
     _intentSub?.cancel();
     _saveTimer?.cancel();
     _userScrollTimer?.cancel();
@@ -188,6 +195,25 @@ class _TTSPageState extends State<TTSPage> {
     super.dispose();
   }
 
+  /// 문서 선택창에서 돌아왔는데도 답이 오지 않으면 버튼을 되살린다.
+  ///
+  /// 선택창이 떠 있는 사이 화면이 통째로 다시 만들어지면(메모리가 모자라
+  /// 뒤에서 정리되는 경우) 네이티브가 들고 있던 응답 통로가 끊긴다.
+  /// 그러면 답이 영영 오지 않아 '문서' 버튼이 꺼진 채로 남는다.
+  ///
+  /// 정상적인 경우 결과는 화면이 돌아오기 직전에 도착하므로, 돌아온 뒤
+  /// 잠깐 기다렸다가도 여전히 기다리는 중이면 끊긴 것으로 본다.
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state != AppLifecycleState.resumed || !_pickingFile) return;
+    _pickWatchdog?.cancel();
+    _pickWatchdog = Timer(const Duration(milliseconds: 1500), () {
+      if (!mounted || !_pickingFile) return;
+      logger.w('문서 선택 결과가 오지 않아 버튼을 되살린다');
+      setState(() => _pickingFile = false);
+    });
+  }
+
   /// 지난번 설정과 소스 목록을 불러온 뒤 모델을 준비한다
   Future<void> _boot() async {
     _settings = await loadSettings();
@@ -198,12 +224,11 @@ class _TTSPageState extends State<TTSPage> {
     _selectedId = _sources.isNotEmpty ? _sources.last.id : null;
 
     // 지난번에 남은 음성 파일 정리 — 각 글의 마지막 재생 위치 파일만 남긴다
-    await NarrationEngine.cleanupTemp(
-      keepSourceIds: _sources.map((s) => s.id).toSet(),
-      keepPaths: _sources
-          .map((s) => s.lastFilePath)
-          .whereType<String>()
-          .toSet(),
+    // 목록에 남은 글의 음성은 그대로 두고, 없어진 글의 것만 버린다.
+    // 총량이 넘치면 오래전에 넣은 글부터 (목록 앞쪽이 오래된 것이다).
+    await NarrationEngine.pruneVoice(
+      oldestFirst: _sources.map((s) => s.id).toList(),
+      inUseSourceId: _selectedId,
     );
 
     if (mounted) setState(() {});
@@ -228,6 +253,55 @@ class _TTSPageState extends State<TTSPage> {
       _updateToastShown = true;
       _showToast('새 버전 v${status.latest} 이 있어요 — 설정에서 받으세요');
     }
+  }
+
+  /// 설정 시트의 '만들어둔 음성' 칸.
+  ///
+  /// 한 번 만든 음성은 버리지 않고 들고 있다가, 그 글에 다시 들어오면
+  /// 곧바로 들려준다. 다만 44.1kHz 무압축이라 한 문장이 0.7MB쯤 되므로
+  /// 지금 얼마나 쓰고 있는지 보이게 하고, 손으로 지울 수도 있게 한다.
+  Widget _voiceRow(void Function(VoidCallback) refresh) {
+    final bytes = _voiceBytes;
+    Future<void> clear() async {
+      await NarrationEngine.clearVoice();
+      final b = await NarrationEngine.voiceBytes();
+      _voiceBytes = b;
+      refresh(() {});
+      if (mounted) setState(() {});
+      _showToast('만들어둔 음성을 지웠어요');
+    }
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          children: [
+            Text('만들어둔 음성',
+                style: displayStyle(size: 13, color: kYellow, letterSpacing: 2)),
+            const Spacer(),
+            if (bytes != null && bytes > 0)
+              _pixelTap(
+                onTap: clear,
+                padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 4),
+                child: Text('지우기',
+                    style: displayStyle(size: 13, color: kSlate)),
+              ),
+          ],
+        ),
+        const SizedBox(height: 10),
+        Text(
+          bytes == null
+              ? '재는 중…'
+              : bytes == 0
+                  ? '아직 없어요'
+                  : '${_mb(bytes)}  ·  ${_mb(NarrationEngine.voiceLimitBytes)} 까지 모아둡니다',
+          style: TextStyle(fontSize: 14, color: bytes == null ? kMuted : kOnSteel),
+        ),
+        const SizedBox(height: 6),
+        const Text('읽었던 글에 다시 들어가면 기다리지 않고 바로 들립니다.',
+            style: TextStyle(fontSize: 13, color: kMuted)),
+      ],
+    );
   }
 
   /// 설정 시트의 업데이트 칸.
@@ -400,9 +474,14 @@ class _TTSPageState extends State<TTSPage> {
     return Column(crossAxisAlignment: CrossAxisAlignment.start, children: rows);
   }
 
-  /// 바이트를 MB 로 (게이지 옆에 붙는 짧은 숫자)
-  static String _mb(int bytes) =>
-      '${(bytes / 1024 / 1024).toStringAsFixed(0)}MB';
+  /// 바이트를 사람이 읽을 만한 짧은 숫자로
+  static String _mb(int bytes) {
+    const mb = 1024 * 1024;
+    if (bytes >= 1024 * mb) {
+      return '${(bytes / (1024 * mb)).toStringAsFixed(1)}GB';
+    }
+    return '${(bytes / mb).toStringAsFixed(0)}MB';
+  }
 
   void _applySettingsToEngine() {
     final at = _engine.setParams(
@@ -665,6 +744,7 @@ class _TTSPageState extends State<TTSPage> {
       logger.e('file pick error', error: e);
       _showToast('열 수 없는 파일');
     } finally {
+      _pickWatchdog?.cancel();
       if (mounted) setState(() => _pickingFile = false);
     }
   }
@@ -781,6 +861,10 @@ class _TTSPageState extends State<TTSPage> {
 
   // ---- 설정 시트 ----
   void _openSettings() {
+    // 시트가 떠 있는 동안 보여줄 값이라 열 때마다 다시 잰다
+    NarrationEngine.voiceBytes().then((b) {
+      if (mounted) setState(() => _voiceBytes = b);
+    });
     showModalBottomSheet<void>(
       context: context,
       backgroundColor: kSteel,
@@ -855,6 +939,10 @@ class _TTSPageState extends State<TTSPage> {
                     color: _menuHint == null ? kMuted : kYellow,
                   ),
                 ),
+                const SizedBox(height: 20),
+                Container(height: 2, color: kLine),
+                const SizedBox(height: 16),
+                _voiceRow(setSheet),
                 const SizedBox(height: 20),
                 Container(height: 2, color: kLine),
                 const SizedBox(height: 16),

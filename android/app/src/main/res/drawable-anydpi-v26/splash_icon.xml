@@ -5,16 +5,22 @@
      깔아버린다. windowSplashScreenIconBackgroundColor 로는 그 받침 색이 바뀌지 않는다.
      그래서 적응형 드로어블을 직접 만들어 넘겨 legacy 처리 자체를 우회한다.
 
-     background 를 배경과 같은 검정으로 두어 받침 원이 배경에 묻힌다.
-     런처 아이콘(@mipmap/ic_launcher)은 건드리지 않는다. -->
+     background 를 배경과 같은 색으로 두어 받침 원이 배경에 묻힌다.
+
+     그림은 런처 아이콘(@mipmap/…, 가장 큰 것이 192px)이 아니라 원본
+     1024px 을 그대로 둔 splash_logo 를 쓴다. 스플래시 아이콘 칸은
+     240dp — 3배 화면이면 720px 이라, 192px 을 끌어다 쓰면 늘려 그리게
+     되어 뿌옇다. 큰 원본을 주면 줄여 그리므로 또렷하다. -->
 <adaptive-icon xmlns:android="http://schemas.android.com/apk/res/android">
     <background android:drawable="@color/splash_bg" />
     <foreground>
         <!-- 적응형 아이콘 캔버스는 108dp, 안전 영역은 가운데 66dp다.
-             양쪽 20%씩 비우면 내용이 약 65dp 안에 들어와 원에 잘리지 않는다.
+             양쪽을 비우는 비율로 그림 크기를 정한다 — 적게 비울수록 크다.
+             27% 씩 비우던 것을 15.5% 로 줄여 그림을 1.5배로 키웠다.
+               남는 폭: 1 - 0.155*2 = 0.69  (전에는 1 - 0.27*2 = 0.46)
              dp 가 아니라 비율로 줘야 스플래시 크기로 확대돼도 비율이 유지된다. -->
         <inset
-            android:drawable="@mipmap/ic_launcher"
-            android:inset="27%" />
+            android:drawable="@drawable/splash_logo"
+            android:inset="15.5%" />
     </foreground>
 </adaptive-icon>

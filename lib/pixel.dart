@@ -303,6 +303,31 @@ const kGlyphFile = PixelGlyph(
   ],
 );
 
+/// 한 밑그림의 도형들을 하나로 합쳐 둔 것.
+///
+/// 도형을 따로따로 칠하면 서로 맞닿는 자리에 실금이 남는다. 가장자리를
+/// 부드럽게 그리느라 두 도형이 그 선을 각각 반쯤만 덮는데, 반과 반이
+/// 하나가 되지 못하고 바탕이 살짝 비친다. 밑그림 하나가 여러 도형으로
+/// 그려져 있으면(재생 삼각형은 셋이다) 그 실금이 얼룩처럼 보인다.
+///
+/// 미리 합쳐 두면 안쪽 경계 자체가 사라진다. 합치는 값이 싸지 않으므로
+/// 밑그림마다 한 번만 하고 들고 있는다 — 밑그림은 const 라 몇 개 안 된다.
+Path unionOf(PixelGlyph glyph) {
+  final hit = _unionCache[glyph];
+  if (hit != null) return hit;
+
+  Path? out;
+  for (final g in glyph.paths) {
+    final p = g.toPath();
+    out = out == null ? p : Path.combine(PathOperation.union, out, p);
+  }
+  final path = out ?? Path();
+  _unionCache[glyph] = path;
+  return path;
+}
+
+final _unionCache = <PixelGlyph, Path>{};
+
 /// 격자 아이콘 하나를 그린다.
 class PixelIcon extends StatelessWidget {
   const PixelIcon(
@@ -335,12 +360,9 @@ class _PixelIconPainter extends CustomPainter {
   @override
   void paint(Canvas canvas, Size size) {
     if (glyph.width <= 0) return;
-    final paint = Paint()..color = color;
     canvas.save();
     canvas.scale(size.width / glyph.width);
-    for (final g in glyph.paths) {
-      canvas.drawPath(g.toPath(), paint);
-    }
+    canvas.drawPath(unionOf(glyph), Paint()..color = color);
     canvas.restore();
   }
 

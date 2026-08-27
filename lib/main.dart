@@ -974,8 +974,10 @@ class _TTSPageState extends State<TTSPage> with WidgetsBindingObserver {
               _controls(),
               const SizedBox(height: 6),
               Text(
-                _engine.error ?? _engine.status,
+                _bottomLine,
                 textAlign: TextAlign.center,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
                 style: TextStyle(
                   fontSize: 14,
                   color: _engine.error != null ? kRed : kMuted,
@@ -988,6 +990,41 @@ class _TTSPageState extends State<TTSPage> with WidgetsBindingObserver {
       ),
       ),
     );
+  }
+
+  /// 화면 맨 아래 한 줄.
+  ///
+  /// 그냥 '재생 중' 이라고 적어 봐야 화면을 보면 아는 것이라 알려 주는 게
+  /// 없다. 대신 지금 읽고 있는 글이 무엇인지를 보여 준다. 그 밖의 상태
+  /// (준비 중·정지·다 읽음)와 오류는 알려 줄 게 있으므로 그대로 보여 준다.
+  String get _bottomLine {
+    final err = _engine.error;
+    if (err != null) return err;
+    final status = _engine.status;
+    if (!status.startsWith('재생 중')) return status;
+    return _playingTitle() ?? status;
+  }
+
+  /// 지금 읽고 있는 글의 이름. 파일이면 파일 이름, 아니면 글의 앞부분.
+  /// 스무 자를 넘으면 줄인다.
+  String? _playingTitle() {
+    const limit = 20;
+    String cut(String s) {
+      final t = s.replaceAll(RegExp(r'\s+'), ' ').trim();
+      if (t.isEmpty) return t;
+      return t.characters.length > limit
+          ? '${t.characters.take(limit)}…'
+          : t;
+    }
+
+    final id = _engine.sourceId;
+    for (final s in _sources) {
+      if (s.id == id) return cut(s.label);
+    }
+    // 목록에 없는 글 — 인풋박스로 바로 읽는 단문
+    final items = _engine.items;
+    if (items.isNotEmpty) return cut(items.first.text);
+    return null;
   }
 
   /// 픽셀 아이콘을 누를 수 있게 감싼다. 그림은 작아도 손가락이 닿을 만큼 넓힌다.

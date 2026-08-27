@@ -119,13 +119,13 @@ class _ToastState extends State<_Toast> with SingleTickerProviderStateMixin {
                     vertical: 9,
                   ),
                   child: Text(
-                    widget.message,
+                    byWord(widget.message),
                     textAlign: TextAlign.center,
                     maxLines: 2,
                     overflow: TextOverflow.ellipsis,
                     style: const TextStyle(
                       color: kOnLight,
-                      fontSize: 13.5,
+                      fontSize: 15.5,
                       height: 1.3,
                     ),
                   ),

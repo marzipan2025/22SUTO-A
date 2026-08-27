@@ -82,7 +82,7 @@ class _TTSPageState extends State<TTSPage> {
 
   // 문장 전체를 줄임 없이 보여주므로 항목 높이가 제각각이다.
   // 정확한 자동 스크롤을 위해 각 항목의 높이를 직접 계산해 캐시한다.
-  static const _bodyStyle = TextStyle(fontSize: 13, height: 1.4);
+  static const _bodyStyle = TextStyle(fontSize: 15, height: 1.4);
   static const _itemVerticalPadding = 20.0; // 위아래 안쪽 여백 (10 + 10)
   static const _itemSidePadding = 12.0; // 좌우 안쪽 여백
   static const _itemGap = 4.0; // 항목 사이 간격
@@ -263,7 +263,8 @@ class _TTSPageState extends State<TTSPage> {
       text: TextSpan(
         style: _measureStyle ?? _bodyStyle,
         children: [
-          TextSpan(text: text),
+          // 그릴 때와 똑같은 글로 재야 줄 수가 어긋나지 않는다
+          TextSpan(text: byWord(text)),
           const TextSpan(text: '\n0'),
         ],
       ),
@@ -387,21 +388,23 @@ class _TTSPageState extends State<TTSPage> {
         backgroundColor: kSteel,
         shape: const PixelBorder(unit: 5),
         title: const Text('삭제할까요?',
-            style: TextStyle(fontSize: 16, color: Colors.white)),
+            style: TextStyle(fontSize: 18, color: Colors.white)),
         content: Text(
-          item.label.length > 60
+          byWord(item.label.length > 60
               ? '${item.label.substring(0, 60)}…'
-              : item.label,
-          style: const TextStyle(fontSize: 13, color: kOnSteel),
+              : item.label),
+          style: const TextStyle(fontSize: 15, color: kOnSteel),
         ),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(ctx, false),
-            child: const Text('취소', style: TextStyle(color: kOnSteel)),
+            child: const Text('취소',
+                style: TextStyle(fontSize: 16, color: kOnSteel)),
           ),
           TextButton(
             onPressed: () => Navigator.pop(ctx, true),
-            child: const Text('삭제', style: TextStyle(color: kYellow)),
+            child: const Text('삭제',
+                style: TextStyle(fontSize: 16, color: kYellow)),
           ),
         ],
       ),
@@ -600,6 +603,7 @@ class _TTSPageState extends State<TTSPage> {
                 const SizedBox(height: 20),
                 DropdownButtonFormField<String>(
                   value: _settings.voice,
+                  style: const TextStyle(fontSize: 15, color: Colors.white),
                   decoration: _dec('목소리'),
                   items: _voiceNames.entries
                       .map((e) => DropdownMenuItem(
@@ -610,6 +614,7 @@ class _TTSPageState extends State<TTSPage> {
                 const SizedBox(height: 12),
                 DropdownButtonFormField<String>(
                   value: _settings.lang,
+                  style: const TextStyle(fontSize: 15, color: Colors.white),
                   decoration: _dec('언어'),
                   items: [
                     const DropdownMenuItem(value: 'auto', child: Text('자동')),
@@ -633,7 +638,7 @@ class _TTSPageState extends State<TTSPage> {
                 Text(
                   _menuHint ?? '읽는 중에 바꾸면 아직 만들지 않은 문장부터 반영됩니다.',
                   style: TextStyle(
-                    fontSize: 12,
+                    fontSize: 14,
                     color: _menuHint == null ? kMuted : kYellow,
                   ),
                 ),
@@ -680,7 +685,7 @@ class _TTSPageState extends State<TTSPage> {
                 _engine.error ?? _engine.status,
                 textAlign: TextAlign.center,
                 style: TextStyle(
-                  fontSize: 12,
+                  fontSize: 14,
                   color: _engine.error != null ? kRed : kMuted,
                 ),
               ),
@@ -757,7 +762,7 @@ class _TTSPageState extends State<TTSPage> {
             ),
             const SizedBox(height: 2),
             const Text('Supertonic 3 · 내 폰에서 바로 만드는 음성',
-                style: TextStyle(fontSize: 11, color: kMuted)),
+                style: TextStyle(fontSize: 13, color: kMuted)),
           ],
         ),
         const Spacer(),
@@ -847,7 +852,7 @@ class _TTSPageState extends State<TTSPage> {
           ),
           const SizedBox(height: 18),
           const Text('읽어줄 글을 추가하세요',
-              style: TextStyle(fontSize: 12, color: kMuted)),
+              style: TextStyle(fontSize: 14, color: kMuted)),
         ],
       ),
     );
@@ -909,11 +914,11 @@ class _TTSPageState extends State<TTSPage> {
               const SizedBox(width: _iconGap),
               Expanded(
                 child: Text(
-                  s.label,
+                  byWord(s.label),
                   maxLines: 2, // 붙여넣기는 앞 두 줄, 파일은 파일명
                   overflow: TextOverflow.ellipsis,
                   style: TextStyle(
-                    fontSize: 12.5,
+                    fontSize: 14.5,
                     height: 1.45,
                     color: skin.ink,
                   ),
@@ -927,7 +932,7 @@ class _TTSPageState extends State<TTSPage> {
                 onTap: () => _confirmDelete(s),
                 child: Padding(
                   padding: const EdgeInsets.only(
-                      left: _iconGap, top: _iconTop, bottom: 14),
+                      left: _iconGap, right: 4, top: _iconTop, bottom: 14),
                   child: PixelIcon(kGlyphCross,
                       cell: _iconCell,
                       color: skin.ink.withValues(alpha: 0.55)),
@@ -957,14 +962,14 @@ class _TTSPageState extends State<TTSPage> {
               textInputAction: TextInputAction.done,
               onChanged: (_) => setState(() {}), // 버튼 문구를 바로 바꾸기 위해
               cursorColor: kYellow,
-              style: const TextStyle(fontSize: 13, color: Colors.white),
+              style: const TextStyle(fontSize: 15, color: Colors.white),
               decoration: const InputDecoration(
                 isDense: true,
                 contentPadding:
                     EdgeInsets.symmetric(horizontal: 14, vertical: 14),
                 border: InputBorder.none,
                 hintText: '짧은 문장 바로 재생',
-                hintStyle: TextStyle(fontSize: 13, color: kOnSteel),
+                hintStyle: TextStyle(fontSize: 15, color: kOnSteel),
               ),
             ),
           ),
@@ -1120,7 +1125,7 @@ class _TTSPageState extends State<TTSPage> {
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         Text(
-                          it.text, // 줄임 없이 전체를 보여준다
+                          byWord(it.text), // 줄임 없이 전체를 보여준다
                           style: _bodyStyle.copyWith(color: skin.ink),
                         ),
                         // 셀 번호 — 본문 아래 한 줄, 좌측
@@ -1214,7 +1219,7 @@ class _TTSPageState extends State<TTSPage> {
 
   InputDecoration _dec(String label) => InputDecoration(
         labelText: label,
-        labelStyle: const TextStyle(color: kOnSteel, fontSize: 13),
+        labelStyle: const TextStyle(color: kOnSteel, fontSize: 15),
         filled: true,
         fillColor: kBg,
         // 픽셀 화면에서는 둥근 모서리를 쓰지 않는다
@@ -1239,7 +1244,7 @@ class _TTSPageState extends State<TTSPage> {
         SizedBox(
             width: 40,
             child: Text(label,
-                style: const TextStyle(fontSize: 13, color: Colors.white))),
+                style: const TextStyle(fontSize: 15, color: Colors.white))),
         Expanded(
           child: SliderTheme(
             data: SliderTheme.of(context).copyWith(

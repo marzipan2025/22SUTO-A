@@ -233,3 +233,58 @@ class _ScrollMaskPainter extends CustomPainter {
   bool shouldRepaint(_ScrollMaskPainter old) =>
       old.unit != unit || old.steps != steps || old.color != color;
 }
+
+/// 낱말 안쪽 글자 사이를 붙여 둔 글.
+///
+/// 한글은 글자 사이 아무 데서나 줄이 넘어간다. 그대로 두면
+/// '도토/리가 맛있다' 처럼 낱말이 잘린다. 낱말 안쪽 글자마다 이음표
+/// (U+2060 WORD JOINER)를 끼워 그 자리에서는 넘어가지 못하게 하면
+/// '도토리가/맛있다' 로 띄어쓰기 자리에서만 줄이 바뀐다.
+/// 눈에 보이지 않고 폭도 차지하지 않는 글자다.
+///
+/// **화면에 그릴 때만 쓴다.** 저장하거나 읽어주는 글은 원문 그대로여야
+/// 한다 — 이음표가 섞이면 합성기가 엉뚱하게 읽는다.
+///
+/// 띄어쓰기 없이 아주 긴 덩어리는 손대지 않는다. 통째로 붙여 두면
+/// 어디서도 줄이 바뀌지 못해 화면 밖으로 삐져나간다.
+String byWord(String text) {
+  final hit = _byWordCache[text];
+  if (hit != null) return hit;
+
+  const joiner = '⁠';
+  const tooLong = 20; // 이보다 긴 덩어리는 줄이 바뀔 자리를 남겨 둔다
+
+  final out = StringBuffer();
+  final chunk = StringBuffer();
+
+  void flush() {
+    final w = chunk.toString();
+    chunk.clear();
+    if (w.length <= 1 || w.length > tooLong) {
+      out.write(w);
+      return;
+    }
+    for (var i = 0; i < w.length; i++) {
+      if (i > 0) out.write(joiner);
+      out.write(w[i]);
+    }
+  }
+
+  for (final ch in text.split('')) {
+    if (ch == ' ' || ch == '\n' || ch == '\t') {
+      flush();
+      out.write(ch);
+    } else {
+      chunk.write(ch);
+    }
+  }
+  flush();
+
+  final result = out.toString();
+  // 같은 문장을 매 프레임 다시 만들지 않도록 조금만 들고 있는다
+  if (_byWordCache.length > 256) _byWordCache.clear();
+  _byWordCache[text] = result;
+  return result;
+}
+
+final _byWordCache = <String, String>{};

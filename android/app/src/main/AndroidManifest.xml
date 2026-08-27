@@ -5,6 +5,13 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK"/>
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>
 
+    <!-- 새 버전이 나왔는지 GitHub 에 묻고, 새 APK 를 내려받기 위한 권한.
+         읽어주는 일 자체는 여전히 폰 안에서만 이뤄진다 — 글이 바깥으로 나가지 않는다. -->
+    <uses-permission android:name="android.permission.INTERNET"/>
+    <!-- 내려받은 APK 를 시스템 설치 화면으로 넘기기 위한 권한.
+         설치를 앱이 직접 하는 것은 아니고, 시스템 화면을 띄울 수 있게만 해 준다. -->
+    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES"/>
+
     <application
         android:label="22SUTO-A"
         android:name="${applicationName}"
@@ -44,6 +51,17 @@
                 <data android:mimeType="text/plain"/>
             </intent-filter>
         </activity>
+        <!-- 내려받은 APK 를 설치 화면에 넘길 때 쓰는 통로 (res/xml/file_paths.xml) -->
+        <provider
+            android:name="androidx.core.content.FileProvider"
+            android:authorities="${applicationId}.fileprovider"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/file_paths" />
+        </provider>
+
         <!-- 화면이 꺼진 동안에도 재생을 유지하는 서비스 -->
         <service
             android:name=".PlaybackService"

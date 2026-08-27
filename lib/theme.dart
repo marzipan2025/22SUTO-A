@@ -303,3 +303,43 @@ bool _clingsToPrevious(int u) =>
     (u >= 0x1160 && u <= 0x11FF) || // 한글 가운뎃소리·끝소리
     (u >= 0x20D0 && u <= 0x20FF) || // 기호에 매달리는 부호
     (u >= 0xFE00 && u <= 0xFE0F); // 모양 고르개
+
+/// 얼마나 왔는지 보여주는 네모 게이지.
+///
+/// 칸이 하나씩 차오른다. 매끈한 막대 대신 칸을 세는 편이 이 화면의 결에 맞고,
+/// 400MB 를 받는 동안 "지금 어디쯤인지"가 눈에 더 잘 들어온다.
+/// [value] 가 null 이면 전체 크기를 모른다는 뜻 — 칸을 채우지 않고 비워 둔다.
+class PixelGauge extends StatelessWidget {
+  const PixelGauge({
+    super.key,
+    required this.value,
+    this.cells = 20,
+    this.height = 10,
+    this.gap = 2,
+    this.fill = kYellow,
+    this.empty = kSteel,
+  });
+
+  final double? value;
+  final int cells;
+  final double height;
+  final double gap;
+  final Color fill;
+  final Color empty;
+
+  @override
+  Widget build(BuildContext context) {
+    final lit = value == null ? 0 : (value!.clamp(0.0, 1.0) * cells).round();
+    return SizedBox(
+      height: height,
+      child: Row(
+        children: [
+          for (var i = 0; i < cells; i++) ...[
+            if (i > 0) SizedBox(width: gap),
+            Expanded(child: ColoredBox(color: i < lit ? fill : empty)),
+          ],
+        ],
+      ),
+    );
+  }
+}

@@ -7,6 +7,8 @@ import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
 import android.provider.OpenableColumns
+import androidx.core.content.FileProvider
+import java.io.File
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.EventChannel
@@ -23,6 +25,7 @@ import org.xmlpull.v1.XmlPullParserFactory
  * - 다른 앱에서 "공유 → 22SUTO-A"로 보낸 글을 Flutter로 전달
  * - 화면이 꺼져도 재생이 이어지도록 포그라운드 서비스를 켜고 끈다
  * - 첫 화면의 "문서 불러오기" 버튼 → 시스템 파일 선택창을 열고 글을 뽑아 전달
+ * - 새 버전 확인에 필요한 지금 버전을 알려주고, 내려받은 APK 를 설치 화면에 넘긴다
  */
 class MainActivity : FlutterActivity() {
 
@@ -30,6 +33,7 @@ class MainActivity : FlutterActivity() {
     private val shareEventsName = "suto_a/share_events"
     private val playbackChannelName = "suto_a/playback"
     private val fileChannelName = "suto_a/file"
+    private val updateChannelName = "suto_a/update"
 
     private val notificationPermissionCode = 9101
     private val pickDocumentRequestCode = 9201
@@ -104,6 +108,69 @@ class MainActivity : FlutterActivity() {
         }
 
         // ---- 문서 불러오기 ----
+        // ---- 새 버전 ----
+        // 확인·내려받기는 Flutter 쪽(lib/update_check.dart)이 한다. 여기서는
+        // Flutter 가 알 수 없는 두 가지만 맡는다 — 지금 깔린 버전, 그리고 설치 화면 띄우기.
+        MethodChannel(messenger, updateChannelName).setMethodCallHandler { call, result ->
+            when (call.method) {
+                // pubspec 의 version 이 그대로 versionName 으로 들어간다
+                "version" -> result.success(
+                    packageManager.getPackageInfo(packageName, 0).versionName
+                )
+
+                // 내려받은 APK 를 시스템 설치 화면에 넘긴다.
+                // 설치 자체는 시스템이 하고 사용자가 확인을 누른다 — 앱이 몰래 깔 수는 없다.
+                "install" -> {
+                    val path = call.argument<String>("path")
+                    if (path.isNullOrEmpty()) {
+                        result.error("no_path", "설치할 파일 경로가 없다", null)
+                        return@setMethodCallHandler
+                    }
+                    val file = File(path)
+                    if (!file.exists()) {
+                        result.error("not_found", "받아둔 파일을 찾을 수 없다", null)
+                        return@setMethodCallHandler
+                    }
+                    try {
+                        val uri = FileProvider.getUriForFile(
+                            this, "$packageName.fileprovider", file
+                        )
+                        startActivity(
+                            Intent(Intent.ACTION_VIEW).apply {
+                                setDataAndType(uri, "application/vnd.android.package-archive")
+                                // 넘겨받은 쪽이 이 파일을 읽을 수 있게 한 번만 열어 준다
+                                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                            }
+                        )
+                        result.success(true)
+                    } catch (e: Exception) {
+                        result.error("install_failed", e.message, null)
+                    }
+                }
+
+                // 받아둔 것이 없거나 설치가 막혔을 때 릴리스 페이지로 보낸다
+                "openUrl" -> {
+                    val url = call.argument<String>("url")
+                    if (url.isNullOrEmpty()) {
+                        result.error("no_url", "열 주소가 없다", null)
+                        return@setMethodCallHandler
+                    }
+                    try {
+                        startActivity(
+                            Intent(Intent.ACTION_VIEW, Uri.parse(url))
+                                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                        )
+                        result.success(true)
+                    } catch (e: Exception) {
+                        result.error("open_failed", e.message, null)
+                    }
+                }
+
+                else -> result.notImplemented()
+            }
+        }
+
         MethodChannel(messenger, fileChannelName).setMethodCallHandler { call, result ->
             when (call.method) {
                 "pickDocument" -> {

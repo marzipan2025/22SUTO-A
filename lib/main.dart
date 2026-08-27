@@ -12,6 +12,7 @@ import 'package:suto_a/settings_store.dart';
 import 'package:suto_a/source_store.dart';
 import 'package:suto_a/status_icon.dart';
 import 'package:suto_a/theme.dart';
+import 'package:suto_a/update_check.dart';
 import 'package:suto_a/toast.dart';
 
 /// 네이티브(MainActivity.kt)와 주고받는 통로
@@ -140,6 +141,18 @@ class _TTSPageState extends State<TTSPage> {
 
   Settings _settings = Settings();
   bool _ready = false;
+
+  // ---- 새 버전 ----
+  /// 켤 때 한 번 확인한 결과. 아직 확인 전이면 null.
+  UpdateStatus? _update;
+  /// 받는 중이면 얼마나 왔는지, 아니면 null
+  DownloadProgress? _downloading;
+  /// 다 받아 설치를 기다리는 파일
+  File? _downloaded;
+  String? _updateError;
+  CancelToken? _downloadCancel;
+  /// 켤 때 뜬 알림을 두 번 띄우지 않기 위한 표
+  bool _updateToastShown = false;
   bool _showList = false; // 입력 화면 ↔ 진행 화면
   bool _pickingFile = false;
   String? _menuHint;
@@ -157,6 +170,7 @@ class _TTSPageState extends State<TTSPage> {
     _playback.setMethodCallHandler(_onPlaybackCall);
     _boot();
     _initShareIntent();
+    _checkUpdateOnLaunch();
   }
 
   @override
@@ -201,6 +215,194 @@ class _TTSPageState extends State<TTSPage> {
       if (mounted) setState(() {});
     }
   }
+
+  /// 켤 때 조용히 한 번 확인한다.
+  ///
+  /// 최신이거나 GitHub 에 못 닿았으면 아무 말도 하지 않는다 — 켤 때마다
+  /// "최신입니다" 를 띄우는 건 성가시기만 하다. 새 버전이 있을 때만 알린다.
+  Future<void> _checkUpdateOnLaunch() async {
+    final status = await fetchStatus();
+    if (!mounted) return;
+    setState(() => _update = status);
+    if (status is UpdateAvailable && !_updateToastShown) {
+      _updateToastShown = true;
+      _showToast('새 버전 v${status.latest} 이 있어요 — 설정에서 받으세요');
+    }
+  }
+
+  /// 설정 시트의 업데이트 칸.
+  ///
+  /// [refresh] 는 시트 안의 상태를 다시 그리게 하는 손잡이다. 시트는 앱 화면과
+  /// 따로 떠 있어서 setState 만으로는 다시 그려지지 않는다.
+  Widget _updateRow(void Function(VoidCallback) refresh) {
+    void redraw() {
+      refresh(() {});
+      if (mounted) setState(() {});
+    }
+
+    Future<void> check() async {
+      refresh(() {
+        _update = null;
+        _updateError = null;
+      });
+      final status = await fetchStatus();
+      _update = status;
+      redraw();
+    }
+
+    Future<void> download(UpdateAvailable info) async {
+      final url = info.apkUrl;
+      if (url == null) {
+        await openReleasesPage();
+        return;
+      }
+      final cancel = CancelToken();
+      _downloadCancel = cancel;
+      _updateError = null;
+      _downloading = DownloadProgress(0, info.bytes);
+      redraw();
+      try {
+        final file = await downloadApk(
+          url,
+          cancel: cancel,
+          onProgress: (p) {
+            // 초당 수십 번 오므로 눈에 보일 만큼 바뀔 때만 다시 그린다
+            final before = _downloading;
+            if (before == null) return;
+            final step = info.bytes > 0 ? info.bytes ~/ 200 : 1 << 20;
+            if (p.received - before.received < step && p.received < p.total) {
+              return;
+            }
+            _downloading = p;
+            redraw();
+          },
+        );
+        _downloaded = file;
+        _downloading = null;
+      } catch (e) {
+        _downloading = null;
+        _updateError = cancel.isCancelled ? null : '받지 못했어요';
+        logger.w('업데이트 받기 실패: $e');
+      }
+      _downloadCancel = null;
+      redraw();
+    }
+
+    final rows = <Widget>[
+      Row(
+        children: [
+          Text('업데이트',
+              style: displayStyle(size: 13, color: kYellow, letterSpacing: 2)),
+          const Spacer(),
+          if (_downloading == null && _downloaded == null)
+            _pixelTap(
+              onTap: check,
+              padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 4),
+              child: Text('확인',
+                  style: displayStyle(size: 13, color: kSlate)),
+            ),
+        ],
+      ),
+      const SizedBox(height: 10),
+    ];
+
+    final status = _update;
+    final downloading = _downloading;
+    final downloaded = _downloaded;
+
+    if (downloading != null) {
+      final f = downloading.fraction;
+      rows.addAll([
+        PixelGauge(value: f),
+        const SizedBox(height: 8),
+        Row(
+          children: [
+            Text(
+              f == null
+                  ? '${_mb(downloading.received)} 받는 중'
+                  : '${(f * 100).round()}%  ·  ${_mb(downloading.received)} / ${_mb(downloading.total)}',
+              style: const TextStyle(fontSize: 14, color: kOnSteel),
+            ),
+            const Spacer(),
+            _pixelTap(
+              onTap: () => _downloadCancel?.cancel(),
+              padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 4),
+              child: Text('그만',
+                  style: displayStyle(size: 13, color: kSlate)),
+            ),
+          ],
+        ),
+      ]);
+    } else if (downloaded != null) {
+      rows.addAll([
+        const Text('다 받았어요. 설치 화면으로 넘어갑니다.',
+            style: TextStyle(fontSize: 14, color: kOnSteel)),
+        const SizedBox(height: 10),
+        Row(children: [
+          _pixelTap(
+            onTap: () => installApk(downloaded).catchError((e) {
+              _updateError = '설치 화면을 열지 못했어요';
+              logger.w('설치 실패: $e');
+              redraw();
+            }),
+            padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 4),
+            child: Text('설치',
+                style: displayStyle(size: 15, color: kYellow)),
+          ),
+        ]),
+      ]);
+    } else if (status == null) {
+      rows.add(const Text('확인 중…',
+          style: TextStyle(fontSize: 14, color: kMuted)));
+    } else if (status is UpToDate) {
+      rows.add(Text('최신입니다 — v ${status.current}',
+          style: const TextStyle(fontSize: 14, color: kOnSteel)));
+    } else if (status is UpdateAvailable) {
+      rows.addAll([
+        Text(
+          'v ${status.current} → v ${status.latest}'
+          '${status.bytes > 0 ? '  ·  ${_mb(status.bytes)}' : ''}',
+          style: const TextStyle(fontSize: 14, color: kOnSteel),
+        ),
+        const SizedBox(height: 10),
+        Row(children: [
+          _pixelTap(
+            onTap: () => download(status),
+            padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 4),
+            child: Text(status.apkUrl == null ? '릴리스 열기' : '받기',
+                style: displayStyle(size: 15, color: kYellow)),
+          ),
+        ]),
+      ]);
+    } else {
+      rows.addAll([
+        const Text('GitHub 에 닿지 못했어요.',
+            style: TextStyle(fontSize: 14, color: kMuted)),
+        const SizedBox(height: 10),
+        Row(children: [
+          _pixelTap(
+            onTap: openReleasesPage,
+            padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 4),
+            child: Text('릴리스 열기',
+                style: displayStyle(size: 13, color: kSlate)),
+          ),
+        ]),
+      ]);
+    }
+
+    if (_updateError != null) {
+      rows.addAll([
+        const SizedBox(height: 8),
+        Text(_updateError!, style: const TextStyle(fontSize: 13, color: kRed)),
+      ]);
+    }
+
+    return Column(crossAxisAlignment: CrossAxisAlignment.start, children: rows);
+  }
+
+  /// 바이트를 MB 로 (게이지 옆에 붙는 짧은 숫자)
+  static String _mb(int bytes) =>
+      '${(bytes / 1024 / 1024).toStringAsFixed(0)}MB';
 
   void _applySettingsToEngine() {
     final at = _engine.setParams(
@@ -653,6 +855,10 @@ class _TTSPageState extends State<TTSPage> {
                     color: _menuHint == null ? kMuted : kYellow,
                   ),
                 ),
+                const SizedBox(height: 20),
+                Container(height: 2, color: kLine),
+                const SizedBox(height: 16),
+                _updateRow(setSheet),
               ],
             ),
           );

@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 받아온 새 APK 를 시스템 설치 화면에 넘기려면 파일을 그대로 건넬 수 없다.
+     안드로이드 7 부터 file:// 를 다른 앱에 넘기면 예외가 난다. FileProvider 로
+     content:// 주소를 만들어 넘기고, 그 주소가 가리킬 수 있는 곳을 여기 적어 둔다.
+     내려받은 APK 는 앱 전용 캐시에 두므로 그 폴더만 열어 준다. -->
+<paths>
+    <cache-path name="update" path="update/" />
+</paths>

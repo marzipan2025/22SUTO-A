@@ -1060,7 +1060,7 @@ class _TTSPageState extends State<TTSPage> {
               const SizedBox(width: 12),
               _glyphButton(
                 glyph: kGlyphFile,
-                fill: kOlive,
+                fill: kSlate,
                 cell: 4,
                 size: const Size(88, 74),
                 onPressed: _pickingFile ? null : _pickFile,
@@ -1075,7 +1075,10 @@ class _TTSPageState extends State<TTSPage> {
     );
   }
 
-  /// 픽셀 그림 하나만 담은 네모 버튼
+  /// 픽셀 그림 하나만 담은 네모 버튼.
+  ///
+  /// 붙여넣기와 문서는 나란히 놓이는 짝이라 같은 색을 쓴다. 전에는 문서만
+  /// 어두운 올리브였는데, 옆의 밝은 색과 견줘 꺼진 버튼처럼 보였다.
   Widget _glyphButton({
     required PixelGlyph glyph,
     required Color fill,
@@ -1210,7 +1213,7 @@ class _TTSPageState extends State<TTSPage> {
           const SizedBox(width: 8),
           _glyphButton(
             glyph: kGlyphFile,
-            fill: kOlive,
+            fill: kSlate,
             cell: _iconCell,
             size: const Size(46, 46),
             onPressed: _pickingFile ? null : _pickFile,

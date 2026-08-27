@@ -1541,10 +1541,11 @@ class _TTSPageState extends State<TTSPage> with WidgetsBindingObserver {
 
   Widget _slider(String label, String value, double v, double min, double max,
       ValueChanged<double> onChanged) {
-    // 슬라이더는 기본으로 손가락이 닿는 최소 높이(48dp)를 차지한다.
-    // 그 위아래 여백이 두 줄 사이 빈틈으로 보이므로 줄 높이를 묶어 둔다.
+    // 두 줄 사이 빈틈은 슬라이더가 손가락 닿는 최소 높이(48dp)를 차지하면서
+    // 생기는 위아래 여백이다. 줄 높이를 여기서 정해 그 빈틈을 조절한다.
+    // 30 까지 줄여 봤으나 답답해서 원래 높이인 48 로 되돌렸다.
     return SizedBox(
-      height: 30,
+      height: 48,
       child: Row(
       children: [
         SizedBox(

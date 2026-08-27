@@ -317,7 +317,7 @@ class PixelGauge extends StatelessWidget {
     this.height = 10,
     this.gap = 2,
     this.fill = kYellow,
-    this.empty = kSteel,
+    this.empty = kBg,
   });
 
   final double? value;
@@ -325,6 +325,9 @@ class PixelGauge extends StatelessWidget {
   final double height;
   final double gap;
   final Color fill;
+
+  /// 아직 차지 않은 칸. 설정 시트 바탕이 kSteel 이므로 그보다 어두운
+  /// 색이라야 눈금이 보인다.
   final Color empty;
 
   @override
@@ -333,6 +336,9 @@ class PixelGauge extends StatelessWidget {
     return SizedBox(
       height: height,
       child: Row(
+        // stretch 라야 칸이 세로로 꽉 찬다. 기본값(center)이면 자식 없는
+        // ColoredBox 가 느슨한 제약을 최소값으로 받아 높이 0 으로 그려진다.
+        crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           for (var i = 0; i < cells; i++) ...[
             if (i > 0) SizedBox(width: gap),

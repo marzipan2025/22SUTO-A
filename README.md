@@ -43,7 +43,7 @@ flutter build appbundle   # 플레이스토어 업로드용 .aab
 
 ## 글꼴
 
-- 본문: 코레일체 Light
+- 본문: JTBC (무게 한 벌)
 - 숫자·영문 표시: [Panchang](https://www.fontshare.com/fonts/panchang)
 
 ## 릴리스 빌드 주의

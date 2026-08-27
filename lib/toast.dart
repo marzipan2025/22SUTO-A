@@ -127,7 +127,6 @@ class _ToastState extends State<_Toast> with SingleTickerProviderStateMixin {
                       color: kOnLight,
                       fontSize: 13.5,
                       height: 1.3,
-                      fontWeight: FontWeight.w600,
                     ),
                   ),
                 ),

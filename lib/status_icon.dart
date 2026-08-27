@@ -83,7 +83,7 @@ class _StatusIconState extends State<StatusIcon>
   PixelGlyph get _glyph {
     switch (widget.status) {
       case SentenceStatus.pending:
-        return kGlyphTick;
+        return kGlyphStandby;
       case SentenceStatus.synthesizing:
         return kGlyphDot;
       case SentenceStatus.ready:
@@ -92,7 +92,7 @@ class _StatusIconState extends State<StatusIcon>
       case SentenceStatus.done:
         return kGlyphCheck;
       case SentenceStatus.failed:
-        return kGlyphFail;
+        return kGlyphFailed;
     }
   }
 

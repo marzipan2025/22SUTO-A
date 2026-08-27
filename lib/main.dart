@@ -92,9 +92,8 @@ class _TTSPageState extends State<TTSPage> {
   static const _iconGap = 10.0;
   /// 그림 윗선을 본문 첫 줄 윗선에 맞추려고 내리는 양
   static const _iconTop = 3.0;
-  /// 지우기 가위표는 다른 그림보다 한 눈금 작게 (20dp → 16dp).
-  /// 같은 크기로 두면 글보다 가위표가 먼저 눈에 들어온다.
-  static const _crossCell = 2.0;
+  /// 카드 안의 그림은 전부 _iconCell 한 눈금으로 그린다 — 픽셀 알갱이가
+  /// 자리마다 달라 보이지 않게.
   /// 상태 그림이 차지하는 폭 (StatusIcon 이 늘 같은 크기로 잡아 둔다)
   static final _iconWidth = statusIconWidth(_iconCell);
 
@@ -930,7 +929,7 @@ class _TTSPageState extends State<TTSPage> {
                   padding: const EdgeInsets.only(
                       left: _iconGap, top: _iconTop, bottom: 14),
                   child: PixelIcon(kGlyphCross,
-                      cell: _crossCell,
+                      cell: _iconCell,
                       color: skin.ink.withValues(alpha: 0.55)),
                 ),
               ),
@@ -975,7 +974,7 @@ class _TTSPageState extends State<TTSPage> {
           _glyphButton(
             glyph: kGlyphPaste,
             fill: kSlate,
-            cell: 2.4,
+            cell: _iconCell,
             size: const Size(46, 46),
             onPressed: _pasteFromClipboard,
           ),
@@ -983,7 +982,7 @@ class _TTSPageState extends State<TTSPage> {
           _glyphButton(
             glyph: kGlyphFile,
             fill: kOlive,
-            cell: 2.4,
+            cell: _iconCell,
             size: const Size(46, 46),
             onPressed: _pickingFile ? null : _pickFile,
           ),
@@ -1044,7 +1043,7 @@ class _TTSPageState extends State<TTSPage> {
     bool iconLast = false,
   }) {
     final ink = dim ? kOnLight.withValues(alpha: 0.35) : kOnLight;
-    final icon = PixelIcon(glyph, cell: 2.6, color: ink);
+    final icon = PixelIcon(glyph, cell: _iconCell, color: ink);
     final text = Text(
       value,
       style: displayStyle(size: 18, color: ink, weight: FontWeight.w700),

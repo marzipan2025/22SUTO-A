@@ -3,6 +3,10 @@ import 'package:suto_a/narration_engine.dart';
 import 'package:suto_a/pixel.dart';
 import 'package:suto_a/theme.dart';
 
+/// 상태 그림이 차지하는 가로 자리. 어떤 상태가 와도 글이 밀리지 않도록
+/// 가장 넓은 그림(체크)에 맞춰 둔다.
+double statusIconWidth(double cell) => kGlyphCheck.widthAt(cell);
+
 /// 문장 상태에 맞는 카드 색 한 벌.
 CardSkin skinFor(SentenceStatus status) {
   switch (status) {
@@ -97,9 +101,10 @@ class _StatusIconState extends State<StatusIcon>
     final icon = PixelIcon(_glyph, cell: widget.cell, color: widget.color);
 
     // 자리를 항상 같은 크기로 잡아 둔다 — 상태가 바뀌어도 글이 밀리지 않는다.
+    // 가장 넓은 그림과 가장 높은 그림에 맞춘 자리 안에서 가운데로 세운다.
     final boxed = SizedBox(
-      width: kGlyphPlay.cols * widget.cell + widget.cell * 2,
-      height: kGlyphPlay.lines * widget.cell,
+      width: statusIconWidth(widget.cell),
+      height: kGlyphPlay.heightAt(widget.cell),
       child: Align(alignment: Alignment.centerLeft, child: icon),
     );
 

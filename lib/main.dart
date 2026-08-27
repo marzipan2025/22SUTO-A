@@ -96,7 +96,7 @@ class _TTSPageState extends State<TTSPage> {
   /// 같은 크기로 두면 글보다 가위표가 먼저 눈에 들어온다.
   static const _crossCell = 2.0;
   /// 상태 그림이 차지하는 폭 (StatusIcon 이 늘 같은 크기로 잡아 둔다)
-  static const _iconWidth = 7 * _iconCell;
+  static final _iconWidth = statusIconWidth(_iconCell);
 
   // 문장 셀 번호 (본문 아래에 한 줄 차지)
   static const _numberFontSize = 10.0;

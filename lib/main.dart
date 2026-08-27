@@ -159,7 +159,6 @@ class _TTSPageState extends State<TTSPage> with WidgetsBindingObserver {
 
   /// 만들어둔 음성이 차지하는 크기 (설정에서 보여준다)
   int? _voiceBytes;
-  String? _menuHint;
 
   static const _voiceNames = {
     'M1': '남성 1', 'M2': '남성 2', 'M3': '남성 3', 'M4': '남성 4', 'M5': '남성 5',
@@ -223,7 +222,6 @@ class _TTSPageState extends State<TTSPage> with WidgetsBindingObserver {
     // 앱을 켰을 때의 기본 선택은 '맨 나중에 추가한 것'
     _selectedId = _sources.isNotEmpty ? _sources.last.id : null;
 
-    // 지난번에 남은 음성 파일 정리 — 각 글의 마지막 재생 위치 파일만 남긴다
     // 목록에 남은 글의 음성은 그대로 두고, 없어진 글의 것만 버린다.
     // 총량이 넘치면 오래전에 넣은 글부터 (목록 앞쪽이 오래된 것이다).
     await NarrationEngine.pruneVoice(
@@ -255,10 +253,10 @@ class _TTSPageState extends State<TTSPage> with WidgetsBindingObserver {
     }
   }
 
-  /// 설정 시트의 '만들어둔 음성' 칸.
+  /// 설정 시트의 '저장한 용량' 칸.
   ///
   /// 한 번 만든 음성은 버리지 않고 들고 있다가, 그 글에 다시 들어오면
-  /// 곧바로 들려준다. 다만 44.1kHz 무압축이라 한 문장이 0.7MB쯤 되므로
+  /// 곧바로 들려준다. 44.1kHz 무압축이라 한 문장이 0.7MB쯤 되므로
   /// 지금 얼마나 쓰고 있는지 보이게 하고, 손으로 지울 수도 있게 한다.
   Widget _voiceRow(void Function(VoidCallback) refresh) {
     final bytes = _voiceBytes;
@@ -276,30 +274,24 @@ class _TTSPageState extends State<TTSPage> with WidgetsBindingObserver {
       children: [
         Row(
           children: [
-            Text('만들어둔 음성',
-                style: displayStyle(size: 13, color: kYellow, letterSpacing: 2)),
+            const Text('저장한 용량', style: _sheetTitle),
             const Spacer(),
             if (bytes != null && bytes > 0)
               _pixelTap(
                 onTap: clear,
-                padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 4),
-                child: Text('지우기',
-                    style: displayStyle(size: 13, color: kSlate)),
+                padding: const EdgeInsets.symmetric(horizontal: 2, vertical: 4),
+                child: const Text('지우기', style: _sheetAction),
               ),
           ],
         ),
-        const SizedBox(height: 10),
+        const SizedBox(height: 5),
         Text(
           bytes == null
               ? '재는 중…'
-              : bytes == 0
-                  ? '아직 없어요'
-                  : '${_mb(bytes)}  ·  ${_mb(NarrationEngine.voiceLimitBytes)} 까지 모아둡니다',
-          style: TextStyle(fontSize: 14, color: bytes == null ? kMuted : kOnSteel),
+              : '${_mb(bytes)} / ${_mb(NarrationEngine.voiceLimitBytes)}',
+          style: TextStyle(
+              fontSize: 14, color: bytes == null ? kMuted : kOnSteel),
         ),
-        const SizedBox(height: 6),
-        const Text('읽었던 글에 다시 들어가면 기다리지 않고 바로 들립니다.',
-            style: TextStyle(fontSize: 13, color: kMuted)),
       ],
     );
   }
@@ -365,19 +357,17 @@ class _TTSPageState extends State<TTSPage> with WidgetsBindingObserver {
     final rows = <Widget>[
       Row(
         children: [
-          Text('업데이트',
-              style: displayStyle(size: 13, color: kYellow, letterSpacing: 2)),
+          const Text('업데이트', style: _sheetTitle),
           const Spacer(),
           if (_downloading == null && _downloaded == null)
             _pixelTap(
               onTap: check,
-              padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 4),
-              child: Text('확인',
-                  style: displayStyle(size: 13, color: kSlate)),
+              padding: const EdgeInsets.symmetric(horizontal: 2, vertical: 4),
+              child: const Text('확인', style: _sheetAction),
             ),
         ],
       ),
-      const SizedBox(height: 10),
+      const SizedBox(height: 5),
     ];
 
     final status = _update;
@@ -387,29 +377,29 @@ class _TTSPageState extends State<TTSPage> with WidgetsBindingObserver {
     if (downloading != null) {
       final f = downloading.fraction;
       rows.addAll([
-        PixelGauge(value: f),
+        PixelGauge(value: f, cells: 12),
         const SizedBox(height: 8),
         Row(
           children: [
-            Text(
-              f == null
-                  ? '${_mb(downloading.received)} 받는 중'
-                  : '${(f * 100).round()}%  ·  ${_mb(downloading.received)} / ${_mb(downloading.total)}',
-              style: const TextStyle(fontSize: 14, color: kOnSteel),
+            Expanded(
+              child: Text(
+                f == null
+                    ? '${_mb(downloading.received)} 받는 중'
+                    : '${(f * 100).round()}%  ${_mb(downloading.received)}/${_mb(downloading.total)}',
+                style: const TextStyle(fontSize: 14, color: kOnSteel),
+              ),
             ),
-            const Spacer(),
             _pixelTap(
               onTap: () => _downloadCancel?.cancel(),
-              padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 4),
-              child: Text('그만',
-                  style: displayStyle(size: 13, color: kSlate)),
+              padding: const EdgeInsets.symmetric(horizontal: 2, vertical: 4),
+              child: const Text('그만', style: _sheetAction),
             ),
           ],
         ),
       ]);
     } else if (downloaded != null) {
       rows.addAll([
-        const Text('다 받았어요. 설치 화면으로 넘어갑니다.',
+        const Text('다 받았어요',
             style: TextStyle(fontSize: 14, color: kOnSteel)),
         const SizedBox(height: 10),
         Row(children: [
@@ -419,9 +409,9 @@ class _TTSPageState extends State<TTSPage> with WidgetsBindingObserver {
               logger.w('설치 실패: $e');
               redraw();
             }),
-            padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 4),
-            child: Text('설치',
-                style: displayStyle(size: 15, color: kYellow)),
+            padding: const EdgeInsets.symmetric(horizontal: 2, vertical: 4),
+            child: const Text('설치',
+                style: TextStyle(fontSize: 16, color: kYellow)),
           ),
         ]),
       ]);
@@ -429,7 +419,7 @@ class _TTSPageState extends State<TTSPage> with WidgetsBindingObserver {
       rows.add(const Text('확인 중…',
           style: TextStyle(fontSize: 14, color: kMuted)));
     } else if (status is UpToDate) {
-      rows.add(Text('최신입니다 — v ${status.current}',
+      rows.add(Text('최신입니다. v ${status.current}',
           style: const TextStyle(fontSize: 14, color: kOnSteel)));
     } else if (status is UpdateAvailable) {
       rows.addAll([
@@ -442,9 +432,9 @@ class _TTSPageState extends State<TTSPage> with WidgetsBindingObserver {
         Row(children: [
           _pixelTap(
             onTap: () => download(status),
-            padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 4),
+            padding: const EdgeInsets.symmetric(horizontal: 2, vertical: 4),
             child: Text(status.apkUrl == null ? '릴리스 열기' : '받기',
-                style: displayStyle(size: 15, color: kYellow)),
+                style: const TextStyle(fontSize: 16, color: kYellow)),
           ),
         ]),
       ]);
@@ -456,9 +446,8 @@ class _TTSPageState extends State<TTSPage> with WidgetsBindingObserver {
         Row(children: [
           _pixelTap(
             onTap: openReleasesPage,
-            padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 4),
-            child: Text('릴리스 열기',
-                style: displayStyle(size: 13, color: kSlate)),
+            padding: const EdgeInsets.symmetric(horizontal: 2, vertical: 4),
+            child: const Text('릴리스 열기', style: _sheetAction),
           ),
         ]),
       ]);
@@ -474,6 +463,11 @@ class _TTSPageState extends State<TTSPage> with WidgetsBindingObserver {
     return Column(crossAxisAlignment: CrossAxisAlignment.start, children: rows);
   }
 
+  /// 설정 시트 아래 두 칸이 같은 결로 보이게 묶어 둔 글자 모양
+  static const _sheetTitle =
+      TextStyle(fontSize: 15, color: kYellow, fontWeight: FontWeight.w700);
+  static const _sheetAction = TextStyle(fontSize: 14, color: kSlate);
+
   /// 바이트를 사람이 읽을 만한 짧은 숫자로
   static String _mb(int bytes) {
     const mb = 1024 * 1024;
@@ -484,15 +478,14 @@ class _TTSPageState extends State<TTSPage> with WidgetsBindingObserver {
   }
 
   void _applySettingsToEngine() {
-    final at = _engine.setParams(
+    // 돌려주는 값(바뀐 설정이 몇 번째 문장부터 먹는지)은 이제 쓰지 않는다.
+    // 그 안내를 화면에서 뺐다.
+    _engine.setParams(
       voice: _settings.voice,
       lang: _settings.lang,
       speed: _settings.speed,
       steps: _settings.steps,
     );
-    if (_engine.isRunning && at != null) {
-      _menuHint = '바뀐 설정은 $at번째 문장부터 적용됩니다.';
-    }
   }
 
   /// 슬라이더를 움직이는 동안 파일을 계속 쓰지 않도록 잠시 모아서 저장
@@ -806,7 +799,6 @@ class _TTSPageState extends State<TTSPage> with WidgetsBindingObserver {
     setState(() {
       _showList = true;
       _lastScrolledIndex = -1;
-      _menuHint = null;
       _extentCache.clear(); // 글이 바뀌면 문장 높이 캐시도 무효
       // 단문은 일회성이므로 재생을 시작하면 칸을 비운다.
       // 안 비우면 다음에 셀을 재생하려 할 때 계속 가로챈다.
@@ -847,7 +839,6 @@ class _TTSPageState extends State<TTSPage> with WidgetsBindingObserver {
     _persistProgress();
     if (mounted) setState(() {
       _showList = false;
-      _menuHint = null;
     });
   }
 
@@ -883,7 +874,7 @@ class _TTSPageState extends State<TTSPage> with WidgetsBindingObserver {
 
           return Padding(
             padding: EdgeInsets.fromLTRB(
-                20, 16, 20, MediaQuery.of(ctx).viewInsets.bottom + 24),
+                20, 16, 20, MediaQuery.of(ctx).viewInsets.bottom + 48),
             child: Column(
               mainAxisSize: MainAxisSize.min,
               crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -931,22 +922,18 @@ class _TTSPageState extends State<TTSPage> with WidgetsBindingObserver {
                 _slider('품질', '${_settings.steps}',
                     _settings.steps.toDouble(), 2, 12,
                     (v) => update(() => _settings.steps = v.round())),
-                const SizedBox(height: 8),
-                Text(
-                  _menuHint ?? '읽는 중에 바꾸면 아직 만들지 않은 문장부터 반영됩니다.',
-                  style: TextStyle(
-                    fontSize: 14,
-                    color: _menuHint == null ? kMuted : kYellow,
-                  ),
+                const SizedBox(height: 10),
+                Container(height: 2, color: kLine),
+                const SizedBox(height: 16),
+                // 둘 다 짧아서 나란히 놓아도 넉넉하다
+                Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Expanded(child: _voiceRow(setSheet)),
+                    const SizedBox(width: 18),
+                    Expanded(child: _updateRow(setSheet)),
+                  ],
                 ),
-                const SizedBox(height: 20),
-                Container(height: 2, color: kLine),
-                const SizedBox(height: 16),
-                _voiceRow(setSheet),
-                const SizedBox(height: 20),
-                Container(height: 2, color: kLine),
-                const SizedBox(height: 16),
-                _updateRow(setSheet),
               ],
             ),
           );
@@ -1554,7 +1541,11 @@ class _TTSPageState extends State<TTSPage> with WidgetsBindingObserver {
 
   Widget _slider(String label, String value, double v, double min, double max,
       ValueChanged<double> onChanged) {
-    return Row(
+    // 슬라이더는 기본으로 손가락이 닿는 최소 높이(48dp)를 차지한다.
+    // 그 위아래 여백이 두 줄 사이 빈틈으로 보이므로 줄 높이를 묶어 둔다.
+    return SizedBox(
+      height: 30,
+      child: Row(
       children: [
         SizedBox(
             width: 40,
@@ -1581,6 +1572,7 @@ class _TTSPageState extends State<TTSPage> with WidgetsBindingObserver {
               style: displayStyle(size: 13, color: kYellow)),
         ),
       ],
+      ),
     );
   }
 }

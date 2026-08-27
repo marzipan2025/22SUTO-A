@@ -14,7 +14,7 @@ class Settings {
     // 공식 문서의 production 기본값은 5단계("balanced"). 2단계는 "미리보기용"이라고
     // 문서에 적혀 있고, 실제로 폰에서 들어봐도 로봇처럼 뭉개져서 못 쓸 정도였다.
     // 8단계는 5단계보다 확산 계산이 더 걸리는 데 비해 체감 이득은 크지 않았다.
-    this.steps = 5,
+    this.steps = 6,
   });
 
   String voice;
@@ -42,7 +42,7 @@ class Settings {
       voice: j['voice'] is String ? j['voice'] as String : 'M1',
       lang: j['lang'] is String ? j['lang'] as String : 'auto',
       speed: (j['speed'] is num) ? (j['speed'] as num).toDouble() : 1.05,
-      steps: (j['steps'] is num) ? (j['steps'] as num).toInt() : 5,
+      steps: (j['steps'] is num) ? (j['steps'] as num).toInt() : 6,
     );
     s.clamp();
     return s;

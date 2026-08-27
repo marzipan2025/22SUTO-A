@@ -1031,7 +1031,7 @@ class _TTSPageState extends State<TTSPage> {
     final playIdx = _engine.currentIndex;
 
     return PixelCard(
-      fill: kSlate,
+      fill: kBoard,
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
       child: Row(
         children: [

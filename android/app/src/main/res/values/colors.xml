@@ -1,6 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <!-- 앱 시작 화면(스플래시) 배경. 아이콘 받침 원도 같은 색을 써서
-         원이 배경에 묻혀 보이지 않게 한다. -->
-    <color name="splash_bg">#FF000000</color>
+    <!-- 앱 시작 화면(스플래시) 배경. 런처 아이콘의 바탕과 같은 색이라
+         아이콘이 배경 위에 얹힌 것처럼 보이지 않고 한 장으로 이어진다.
+         아이콘 받침 원도 같은 색을 써서 원이 배경에 묻힌다. -->
+    <color name="splash_bg">#FF6B8C8E</color>
 </resources>

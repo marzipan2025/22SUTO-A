@@ -17,6 +17,7 @@ const kOlive = Color(0xFF8A7A17); // 다 읽은 문장
 const kRust = Color(0xFFA93C0B); // 만드는 중
 const kSlate = Color(0xFF7A959B); // 대시보드 · 다음 차례
 const kSteel = Color(0xFF35423F); // 아직 차례가 오지 않은 문장
+const kBoard = Color(0xFFFFFFFF); // 진행 화면 맨 윗줄 — 지금 어디까지 왔는지
 const kRed = Color(0xFFD8341F); // 실패
 
 /// 밝은 카드 위에 얹는 글자 — 바탕과 같은 검정

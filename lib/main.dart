@@ -4,6 +4,7 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart' show ScrollDirection;
 import 'package:flutter/services.dart';
+import 'package:suto_a/hangul.dart';
 import 'package:suto_a/helper.dart';
 import 'package:suto_a/narration_engine.dart';
 import 'package:suto_a/pixel.dart';
@@ -96,6 +97,12 @@ class _TTSPageState extends State<TTSPage> {
   /// 자리마다 달라 보이지 않게.
   /// 상태 그림이 차지하는 폭 (StatusIcon 이 늘 같은 크기로 잡아 둔다)
   static final _iconWidth = statusIconWidth(_iconCell);
+
+  /// 입력 화면 목록의 그림 자리 — 붙여넣기·파일 중 넓은 쪽에 맞춘다
+  static final _sourceIconWidth = [
+    kGlyphPaste.widthAt(_iconCell),
+    kGlyphFile.widthAt(_iconCell),
+  ].reduce((a, b) => a > b ? a : b);
 
   // 문장 셀 번호 (본문 아래에 한 줄 차지)
   static const _numberFontSize = 10.0;
@@ -359,8 +366,10 @@ class _TTSPageState extends State<TTSPage> {
     final item = SourceItem(
       id: SourceItem.newId(),
       kind: kind,
-      text: text,
-      fileName: fileName,
+      // 맥에서 온 글·파일 이름은 한글이 풀어써져 있다. 여기서 붙여 두면
+      // 화면도 합성기도 제대로 받는다.
+      text: composeHangul(text),
+      fileName: fileName == null ? null : composeHangul(fileName),
       addedAt: DateTime.now(),
     );
     setState(() {
@@ -503,7 +512,9 @@ class _TTSPageState extends State<TTSPage> {
     }
 
     // 인풋박스에 글자가 있으면 그것만 읽는다. 비어 있으면 선택된 셀을 읽는다.
-    final text = short.isNotEmpty ? short : (source?.text.trim() ?? '');
+    // 이미 저장돼 있던 글은 풀어써진 채일 수 있다 — 읽히기 전에 붙인다
+    final text =
+        composeHangul(short.isNotEmpty ? short : (source?.text.trim() ?? ''));
     if (!_ready || text.isEmpty) return;
 
     // 다른 글로 넘어가기 전에 지금까지의 진행 위치를 남긴다
@@ -906,10 +917,17 @@ class _TTSPageState extends State<TTSPage> {
           child: Row(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
+              // 붙여넣기 그림이 파일 그림보다 넓다. 넓은 쪽에 맞춰 자리를
+              // 잡고 가운데에 세워야 두 카드의 글이 같은 자리에서 시작한다.
               Padding(
                 padding: const EdgeInsets.only(top: _iconTop),
-                child: PixelIcon(isFile ? kGlyphFile : kGlyphPaste,
-                    cell: _iconCell, color: skin.ink),
+                child: SizedBox(
+                  width: _sourceIconWidth,
+                  child: Center(
+                    child: PixelIcon(isFile ? kGlyphFile : kGlyphPaste,
+                        cell: _iconCell, color: skin.ink),
+                  ),
+                ),
               ),
               const SizedBox(width: _iconGap),
               Expanded(

@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:suto_a/hangul.dart';
 import 'package:suto_a/pixel.dart';
 
 /// 화면의 색과 글꼴을 한자리에 모아둔 곳.
@@ -251,6 +252,10 @@ String byWord(String text) {
   final hit = _byWordCache[text];
   if (hit != null) return hit;
 
+  // 풀어써진 한글부터 붙인다. 낱자 사이에 이음표가 끼면 조합이 끊겨
+  // 'ㅇㅟㄷㅐ' 처럼 풀어진 채로 그려진다.
+  final src = composeHangul(text);
+
   const joiner = '⁠';
   const tooLong = 20; // 이보다 긴 덩어리는 줄이 바뀔 자리를 남겨 둔다
 
@@ -265,12 +270,14 @@ String byWord(String text) {
       return;
     }
     for (var i = 0; i < w.length; i++) {
-      if (i > 0) out.write(joiner);
+      // 앞 글자에 매달리는 글자(낱자·성조 같은 것) 앞에는 끼우지 않는다.
+      // 끼우면 두 글자가 하나로 합쳐지지 못한다.
+      if (i > 0 && !_clingsToPrevious(w.codeUnitAt(i))) out.write(joiner);
       out.write(w[i]);
     }
   }
 
-  for (final ch in text.split('')) {
+  for (final ch in src.split('')) {
     if (ch == ' ' || ch == '\n' || ch == '\t') {
       flush();
       out.write(ch);
@@ -288,3 +295,10 @@ String byWord(String text) {
 }
 
 final _byWordCache = <String, String>{};
+
+/// 앞 글자에 매달려 하나로 합쳐지는 글자인가
+bool _clingsToPrevious(int u) =>
+    (u >= 0x0300 && u <= 0x036F) || // 성조·구별 부호
+    (u >= 0x1160 && u <= 0x11FF) || // 한글 가운뎃소리·끝소리
+    (u >= 0x20D0 && u <= 0x20FF) || // 기호에 매달리는 부호
+    (u >= 0xFE00 && u <= 0xFE0F); // 모양 고르개

@@ -351,6 +351,13 @@ class PixelGauge extends StatelessWidget {
   }
 }
 
+/// 노란 카드 위에서 쓰는 '만들어 둔 칸' 색.
+///
+/// 카드 바탕이 [kYellow] 라 같은 노랑으로 칠하면 묻힌다. 검정 위에 노랑을
+/// 0.7 만큼 얹은 색을 미리 내어 둔다 — 노랑과 검정 사이라 어느 쪽에 놓아도
+/// 보인다. 칸은 한 번만 칠하므로(겹쳐 칠하지 않는다) 색을 미리 섞는다.
+final kMadeOnYellow = Color.alphaBlend(kYellow.withValues(alpha: 0.7), kBg);
+
 /// 문장마다 음성을 만들어 뒀는지 늘어놓은 띠.
 ///
 /// 작은 네모 하나가 문장 하나다. 채워진 것은 만들어 둔 것, 빈 것은 아직이다.
@@ -363,19 +370,21 @@ class MadeStrip extends StatelessWidget {
   const MadeStrip({
     super.key,
     required this.flags,
-    required this.ink,
-    this.cell = 3,
-    this.gap = 0.5,
+    this.cell = 5,
+    this.gap = 1,
+    this.on = kYellow,
+    this.off = kBg,
   });
 
   /// 문장마다 음성이 있는지
   final List<bool> flags;
 
-  /// 카드 위 글자색. 켜진 칸은 이 색, 꺼진 칸은 같은 색을 아주 옅게.
-  final Color ink;
-
   final double cell;
   final double gap;
+
+  /// 만들어 둔 칸 / 아직인 칸
+  final Color on;
+  final Color off;
 
   @override
   Widget build(BuildContext context) {
@@ -388,7 +397,7 @@ class MadeStrip extends StatelessWidget {
         if (fit < 1) return const SizedBox.shrink();
         return CustomPaint(
           size: Size(c.maxWidth, cell),
-          painter: _StripPainter(flags, fit, cell, gap, ink),
+          painter: _StripPainter(flags, fit, cell, gap, on, off),
         );
       }),
     );
@@ -396,19 +405,20 @@ class MadeStrip extends StatelessWidget {
 }
 
 class _StripPainter extends CustomPainter {
-  _StripPainter(this.flags, this.fit, this.cell, this.gap, this.ink);
+  _StripPainter(this.flags, this.fit, this.cell, this.gap, this.on, this.off);
 
   final List<bool> flags;
   final int fit;
   final double cell;
   final double gap;
-  final Color ink;
+  final Color on;
+  final Color off;
 
   @override
   void paint(Canvas canvas, Size size) {
     final n = flags.length < fit ? flags.length : fit;
-    final on = Paint()..color = ink;
-    final off = Paint()..color = ink.withValues(alpha: 0.18);
+    final lit = Paint()..color = on;
+    final dark = Paint()..color = off;
 
     for (var k = 0; k < n; k++) {
       // 이 칸이 맡은 문장 구간
@@ -423,7 +433,7 @@ class _StripPainter extends CustomPainter {
       }
       canvas.drawRect(
         Rect.fromLTWH(k * (cell + gap), 0, cell, cell),
-        all ? on : off,
+        all ? lit : dark,
       );
     }
   }
@@ -431,7 +441,8 @@ class _StripPainter extends CustomPainter {
   @override
   bool shouldRepaint(_StripPainter old) =>
       old.fit != fit ||
-      old.ink != ink ||
+      old.on != on ||
+      old.off != off ||
       old.cell != cell ||
       !listEquals(old.flags, flags);
 }

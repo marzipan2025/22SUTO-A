@@ -801,8 +801,10 @@ class _TTSPageState extends State<TTSPage> with WidgetsBindingObserver {
     }
   }
 
-  Future<void> _start() async {
-    final short = _shortController.text.trim();
+  /// [ignoreShort] 가 참이면 인풋박스에 글자가 있어도 고른 글을 읽는다.
+  /// 목록의 카드를 눌러 들어올 때가 그렇다 — 누른 그 글이 열려야 한다.
+  Future<void> _start({bool ignoreShort = false}) async {
+    final short = ignoreShort ? '' : _shortController.text.trim();
     final source = _selectedSource;
 
     // 이미 그 글을 읽고 있는 중이면 화면만 보여준다 (뒤로 갔다 다시 들어온 경우)
@@ -1263,7 +1265,15 @@ class _TTSPageState extends State<TTSPage> with WidgetsBindingObserver {
         return PixelCard(
           fill: skin.fill,
           padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
-          onTap: () => setState(() => _selectedId = s.id),
+          // 아직 고르지 않은 글은 한 번 눌러 고르고, 이미 고른 글(노란 카드)을
+          // 다시 누르면 바로 그 글로 들어간다 — 아래 버튼까지 갈 필요가 없다.
+          onTap: () {
+            if (s.id == _selectedId) {
+              _start(ignoreShort: true);
+            } else {
+              setState(() => _selectedId = s.id);
+            }
+          },
           child: Row(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
@@ -1296,7 +1306,11 @@ class _TTSPageState extends State<TTSPage> with WidgetsBindingObserver {
                     ),
                     if (_made[s.id]?.isNotEmpty ?? false) ...[
                       const SizedBox(height: 8),
-                      MadeStrip(flags: _made[s.id]!, ink: skin.ink),
+                      MadeStrip(
+                        flags: _made[s.id]!,
+                        // 고른 카드는 바탕이 노랑이라 같은 노랑이 묻힌다
+                        on: selected ? kMadeOnYellow : kYellow,
+                      ),
                     ],
                   ],
                 ),

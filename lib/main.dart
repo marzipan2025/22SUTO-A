@@ -187,9 +187,42 @@ class _TTSPageState extends State<TTSPage> with WidgetsBindingObserver {
   int? _scrubTo;
   Timer? _scrubTimer;
 
+  /// 타임라인에 손가락이 닿아 있는 동안 참.
+  /// 그동안 얼굴을 옅게 해 가려진 것을 볼 수 있게 한다.
+  bool _scrubTouching = false;
+
+  /// 인풋박스에 커서가 들어가 있는 동안 참.
+  /// 키패드가 올라오면 얼굴이 가려질 자리에 겹치므로 같이 옅게 한다.
+  bool _shortFocused = false;
+
   /// 글마다 문장별로 음성을 만들어 뒀는지. 목록 카드 아래 띠에 쓴다.
   /// 폴더를 훑어야 알 수 있으므로 그때그때 재지 않고 모아 두고 쓴다.
   Map<String, List<bool>> _made = {};
+
+  /// 목소리마다 얼굴 하나. 화면 아래에 서서 지금 누가 읽는지 알려 준다.
+  static const _voiceFaces = {
+    'M1': 'new_m_01', 'M2': 'new_m_02', 'M3': 'new_m_03',
+    'M4': 'new_m_04', 'M5': 'new_m_05',
+    'F1': 'new_f_01', 'F2': 'new_f_02', 'F3': 'new_f_03',
+    'F4': 'new_f_04', 'F5': 'new_f_05',
+  };
+
+  /// 얼굴의 폭. 그림에서 투명한 가장자리를 모두 잘라내 두었으므로
+  /// 이 값이 곧 보이는 얼굴의 폭이다. 높이는 그림마다 다르다.
+  static const _faceWidth = 120.0;
+
+  /// 화면 바깥 여백 (Column 의 좌우 안쪽 여백)
+  static const _pagePad = 16.0;
+
+  /// 화면 아래에 설 얼굴.
+  ///
+  /// 지금 들리는 음성을 만든 목소리를 따른다 — 설정을 바꿔도 이미 만들어
+  /// 둔 것은 그대로 쓰므로, 설정만 보면 들리는 것과 어긋난다.
+  /// 아직 아무것도 재생하지 않았으면 설정의 목소리를 보여 준다.
+  String? get _faceAsset {
+    final name = _voiceFaces[_engine.playingVoice ?? _settings.voice];
+    return name == null ? null : 'assets/char/$name.png';
+  }
 
   static const _voiceNames = {
     'M1': '남성 1', 'M2': '남성 2', 'M3': '남성 3', 'M4': '남성 4', 'M5': '남성 5',
@@ -200,12 +233,18 @@ class _TTSPageState extends State<TTSPage> with WidgetsBindingObserver {
   void initState() {
     super.initState();
     _engine.addListener(_onEngineChanged);
+    _shortFocus.addListener(_onShortFocusChanged);
     _engine.onSentenceChanged = _onSentenceChanged;
     _playback.setMethodCallHandler(_onPlaybackCall);
     WidgetsBinding.instance.addObserver(this);
     _boot();
     _initShareIntent();
     _checkUpdateOnLaunch();
+  }
+
+  void _onShortFocusChanged() {
+    if (_shortFocused == _shortFocus.hasFocus) return;
+    setState(() => _shortFocused = _shortFocus.hasFocus);
   }
 
   @override
@@ -221,6 +260,7 @@ class _TTSPageState extends State<TTSPage> with WidgetsBindingObserver {
     _engine.removeListener(_onEngineChanged);
     _engine.dispose();
     _shortController.dispose();
+    _shortFocus.removeListener(_onShortFocusChanged);
     _shortFocus.dispose();
     _listController.dispose();
     super.dispose();
@@ -1058,7 +1098,7 @@ class _TTSPageState extends State<TTSPage> with WidgetsBindingObserver {
         onTap: () => FocusScope.of(context).unfocus(),
         child: SafeArea(
         child: Padding(
-          padding: const EdgeInsets.fromLTRB(16, 8, 16, 10),
+          padding: const EdgeInsets.fromLTRB(_pagePad, 8, _pagePad, 6),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
@@ -1081,6 +1121,10 @@ class _TTSPageState extends State<TTSPage> with WidgetsBindingObserver {
                   // 쓰는 동안에는 손가락이 가리키는 자리를 보여 준다
                   current: _scrubTo ?? _engine.currentIndex,
                   onSeek: _scrub,
+                  onTouch: (down) {
+                    if (_scrubTouching == down) return;
+                    setState(() => _scrubTouching = down);
+                  },
                 ),
                 const SizedBox(height: 4),
               ],
@@ -1643,50 +1687,85 @@ class _TTSPageState extends State<TTSPage> with WidgetsBindingObserver {
       // 인풋박스에 글자가 있으면 그것만, 없으면 선택된 셀을 읽는다
       final canStart = _ready && (hasShort || _selectedSource != null);
 
-      return Row(
-        children: [
-          _wordAction(
-            label: !_ready ? 'LOADING' : (hasShort ? 'SAY' : 'PLAY'),
-            size: 34,
-            weight: FontWeight.w700,
-            onTap: canStart ? _start : null,
-          ),
-          const Spacer(),
-        ],
+      return _controlBox(
+        Row(
+          children: [
+            _wordAction(
+              label: !_ready ? 'LOADING' : (hasShort ? 'SAY' : 'PLAY'),
+              weight: FontWeight.w700,
+              onTap: canStart ? _start : null,
+            ),
+            const Spacer(),
+          ],
+        ),
       );
     }
 
-    // 크기가 다른 두 표시어의 '윗선'을 맞춘다.
-    // 밑선을 먼저 맞춘 뒤, 캡 높이 차이만큼 작은 쪽을 끌어올리면
-    // 대문자 윗선이 한 줄로 선다.
-    const big = 34.0;
-    const small = 23.0;
-    const lift = (big - small) * kPanchangCapRatio;
+    // PAUSE 와 STOP 이 같은 크기라 밑선만 맞추면 윗선도 함께 선다.
+    return _controlBox(
+      Row(
+        crossAxisAlignment: CrossAxisAlignment.baseline,
+        textBaseline: TextBaseline.alphabetic,
+        children: [
+          _wordAction(
+            label: _engine.isPlaying ? 'PAUSE' : 'PLAY',
+            weight: FontWeight.w700,
+            onTap: _togglePause,
+          ),
+          const Spacer(),
+          _wordAction(label: 'STOP', onTap: _stop),
+        ],
+      ),
+    );
+  }
 
-    return Row(
-      crossAxisAlignment: CrossAxisAlignment.baseline,
-      textBaseline: TextBaseline.alphabetic,
+  /// 아래 단추가 서는 판. 두 화면이 같은 얼굴을 쓴다.
+  /// 진행 화면 맨 윗줄(대시보드)과 같은 색·같은 픽셀 카드다.
+  ///
+  /// 얼굴은 이 판의 **바닥에 발을 맞추고** 위로 솟는다. 판보다 크므로
+  /// 위쪽 목록을 가리는데, 그러라고 맨 나중에 그린다.
+  Widget _controlBox(Widget child) {
+    final face = _faceAsset;
+    return Stack(
+      // 판 밖으로 솟는 부분이 잘리지 않아야 한다
+      clipBehavior: Clip.none,
+      alignment: Alignment.bottomCenter,
       children: [
-        _wordAction(
-          label: _engine.isPlaying ? 'PAUSE' : 'PLAY',
-          size: big,
-          weight: FontWeight.w700,
-          onTap: _togglePause,
+        PixelCard(
+          fill: kBoard,
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+          child: child,
         ),
-        const Spacer(),
-        Transform.translate(
-          offset: const Offset(0, -lift),
-          child: _wordAction(label: 'STOP', size: small, onTap: _stop),
-        ),
+        if (face != null)
+          Positioned(
+            bottom: 0,
+            child: IgnorePointer(
+              // 타임라인을 만지는 동안에는 옅어져 뒤가 비친다
+              child: AnimatedOpacity(
+                opacity: _scrubTouching || _shortFocused ? 0.3 : 1,
+                duration: const Duration(milliseconds: 120),
+                child: Image.asset(
+                  face,
+                  width: _faceWidth,
+                  // 픽셀 그림이라 매끄럽게 늘이면 뭉갠다
+                  filterQuality: FilterQuality.none,
+                  isAntiAlias: false,
+                ),
+              ),
+            ),
+          ),
       ],
     );
   }
 
-  /// 테두리도 배경도 없이 글자만 놓는 버튼. 크기로 주·부를 가른다.
+  /// 테두리도 배경도 없이 글자만 놓는 버튼.
+  ///
+  /// 흰 판 위에 서므로 글자는 검정이다. 누를 수 없을 때는 판에
+  /// 묻히도록 흐려 둔다.
   Widget _wordAction({
     required String label,
     required VoidCallback? onTap,
-    double size = 23,
+    double size = 15,
     FontWeight weight = FontWeight.w500,
   }) {
     return GestureDetector(
@@ -1698,7 +1777,9 @@ class _TTSPageState extends State<TTSPage> with WidgetsBindingObserver {
           label,
           style: displayStyle(
             size: size,
-            color: onTap == null ? kSteel : kYellow,
+            color: onTap == null
+                ? kOnLight.withValues(alpha: 0.3)
+                : kOnLight,
             weight: weight,
             letterSpacing: 1.5,
           ),

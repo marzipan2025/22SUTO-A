@@ -376,6 +376,7 @@ class MadeStrip extends StatelessWidget {
     this.on = kYellow,
     this.off = kBg,
     this.onSeek,
+    this.onTouch,
     this.touchHeight = 0,
     this.current,
   });
@@ -398,6 +399,10 @@ class MadeStrip extends StatelessWidget {
 
   /// 지금 서 있는 문장. 그 칸만 흰빛으로 세운다.
   final int? current;
+
+  /// 손가락이 띠에 닿아 있는 동안 참으로 알린다. 띠를 만지는 사이에는
+  /// 화면 아래 얼굴을 옅게 해 가려진 것을 볼 수 있게 하는 데 쓴다.
+  final void Function(bool touching)? onTouch;
 
   /// 손가락이 닿는 높이. 띠 자체는 [cell] 만큼 얇으므로 누르는 자리는
   /// 따로 넉넉히 잡는다. 0이면 누를 수 없는 띠다.
@@ -429,12 +434,24 @@ class MadeStrip extends StatelessWidget {
           seek(k * flags.length ~/ n);
         }
 
+        void touch(bool down) => onTouch?.call(down);
+
         return GestureDetector(
           behavior: HitTestBehavior.opaque,
-          onTapDown: (d) => at(d.localPosition.dx),
+          onTapDown: (d) {
+            touch(true);
+            at(d.localPosition.dx);
+          },
+          onTapUp: (_) => touch(false),
+          onTapCancel: () => touch(false),
           // 누른 채 쓸면 따라 움직인다
-          onHorizontalDragStart: (d) => at(d.localPosition.dx),
+          onHorizontalDragStart: (d) {
+            touch(true);
+            at(d.localPosition.dx);
+          },
           onHorizontalDragUpdate: (d) => at(d.localPosition.dx),
+          onHorizontalDragEnd: (_) => touch(false),
+          onHorizontalDragCancel: () => touch(false),
           child: strip,
         );
       }),

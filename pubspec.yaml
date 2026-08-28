@@ -1,7 +1,7 @@
 name: suto_a
 description: "22SUTO-A — Supertonic 3 on-device TTS for Android"
 publish_to: 'none'
-version: 0.3.3+27
+version: 0.4.0+28
 
 environment:
   sdk: ^3.5.0
@@ -30,6 +30,7 @@ flutter:
   assets:
     - assets/onnx/
     - assets/voice_styles/
+    - assets/char/
   fonts:
     # 에이투지체 SemiBold — 본문 기본 글꼴. 한 벌만 넣는다.
     # 한글 11,172자를 모두 덮는다. 굵기를 나누지 않으므로 본문 어디에도

@@ -19,6 +19,11 @@ class SentenceItem {
 
   SentenceStatus status = SentenceStatus.pending;
   String? filePath;
+
+  /// 이 문장의 음성을 어떤 목소리로 만들었는지 (M1…F5).
+  /// 설정을 바꿔도 이미 만들어 둔 것은 그대로 쓰므로, 지금 설정과 다를 수 있다.
+  /// 파일 이름에서 읽어 오거나 만들 때 적어 둔다. 알 수 없으면 null.
+  String? voice;
 }
 
 /// 선행 합성(prefetch) 파이프라인.
@@ -83,6 +88,28 @@ class NarrationEngine extends ChangeNotifier {
   /// 보면 안 된다 — 다음 문장을 만드는 동안에도 잠깐씩 멎기 때문이다.
   bool _userPaused = false;
   bool _pumping = false;
+  bool _pumpAgain = false; // 미는 동안 또 밀어 달라는 요청이 왔다
+
+  /// 재생목록 세대.
+  ///
+  /// 자리를 옮기면 재생목록을 비우고 처음부터 다시 담는다. 그런데 비우기
+  /// 직전에 시작된 '한 문장 담기'는 비운 뒤에 끝날 수 있다. 그러면 재생기가
+  /// 든 순서와 [_playlistMap]의 문장 번호가 한 칸씩 어긋나, 소리는 다음
+  /// 문장인데 화면은 앞 문장에 노랗게 남는다.
+  /// 비울 때마다 이 번호를 올려, 옛 세대의 담기는 스스로 물러나게 한다.
+  int _playlistGen = 0;
+
+  /// 재생목록을 건드리는 일은 한 번에 하나씩.
+  ///
+  /// 담는 도중에 비우면 재생기와 [_playlistMap]이 어긋난다. 담기·비우기를
+  /// 모두 이 줄에 세워, 하나가 끝난 뒤에 다음이 시작하도록 한다.
+  Future<void> _playlistLock = Future<void>.value();
+
+  Future<void> _withPlaylist(Future<void> Function() body) {
+    final next = _playlistLock.then((_) => body());
+    _playlistLock = next.catchError((_) {});
+    return next;
+  }
   int _warmupTarget = 0; // 재생 시작 전에 준비해야 할 문장 수
   bool _warmOk = true; // 재생을 시작해도 되는지
   String _status = '';
@@ -218,6 +245,7 @@ class NarrationEngine extends ChangeNotifier {
     // 뒤에도 그대로 되찾는다 — 메모리에 표를 들고 있을 필요가 없다.
     _attachMade(startAt);
 
+    _playlistGen++;
     _playlistEnd = startAt;
     _playlistMap.clear();
     _running = true;
@@ -232,24 +260,23 @@ class NarrationEngine extends ChangeNotifier {
 
   /// 폴더에 이미 있는 음성을 문장에 붙인다.
   ///
-  /// 지금 설정으로 만든 것만 붙인다. 다른 설정으로 만든 것은 소리가 다르므로
-  /// 쓰지 않지만 **지우지도 않는다** — 설정을 되돌리면 그때 다시 쓰인다.
+  /// **설정으로 가리지 않는다 — 있으면 쓴다.** 목소리를 바꿨다고 이미
+  /// 만들어 둔 것을 못 본 척하고 처음부터 다시 만드는 것은 값이 너무 크다.
+  /// 지금 설정으로 만든 것이 따로 있으면 그쪽을 먼저 고른다.
   void _attachMade(int startAt) {
     final dir = _sessionDir;
     if (dir == null || !dir.existsSync()) return;
 
-    final have = <String>{};
-    for (final f in dir.listSync()) {
-      if (f is File) have.add(f.path.split('/').last);
-    }
-    if (have.isEmpty) return;
+    final byPrefix = _byPrefix(dir);
+    if (byPrefix.isEmpty) return;
 
     final sig = _signature;
     var found = 0;
     for (var i = 0; i < _items.length; i++) {
-      final name = voiceFileName(i, _items[i].text, sig);
-      if (!have.contains(name)) continue;
+      final name = _pickFileFor(byPrefix, i, _items[i].text, _voice, sig);
+      if (name == null) continue;
       _items[i].filePath = '${dir.path}/$name';
+      _items[i].voice = voiceOfFileName(name) ?? _legacyVoiceOf(name);
       if (i >= startAt) _items[i].status = SentenceStatus.ready;
       found++;
     }
@@ -266,12 +293,15 @@ class NarrationEngine extends ChangeNotifier {
     _running = false;
     _stalled = false;
     _synthesizingIndex = -1;
-    _playlistEnd = 0;
-    _playlistMap.clear();
-    try {
-      await player.stop();
-      await player.clearAudioSources();
-    } catch (_) {}
+    await _withPlaylist(() async {
+      _playlistGen++;
+      _playlistEnd = 0;
+      _playlistMap.clear();
+      try {
+        await player.stop();
+        await player.clearAudioSources();
+      } catch (_) {}
+    });
 
     _setStatus('정지했어요.');
   }
@@ -302,6 +332,13 @@ class NarrationEngine extends ChangeNotifier {
       _currentIndex >= 0 &&
       _currentIndex < _items.length &&
       _items[_currentIndex].status == SentenceStatus.pending;
+
+  /// 지금 들리는 목소리. 만들어 둔 것을 쓰고 있으면 설정과 다를 수 있다.
+  /// 알 수 없으면 null — 그때는 설정의 목소리를 쓰면 된다.
+  String? get playingVoice {
+    if (_currentIndex < 0 || _currentIndex >= _items.length) return null;
+    return _items[_currentIndex].voice;
+  }
 
   /// 지금 위치의 음성 파일 경로 (앱을 끌 때 저장해 둘 값)
   String? get currentFilePath {
@@ -360,8 +397,6 @@ class NarrationEngine extends ChangeNotifier {
     }
 
     _currentIndex = i;
-    _playlistEnd = i;
-    _playlistMap.clear();
     _stalled = true;
     _error = null;
     _warmOk = true; // 건너뛴 뒤에는 준비되는 대로 바로 재생
@@ -370,10 +405,17 @@ class NarrationEngine extends ChangeNotifier {
     // 들고 있으면, 누른 것이 먹히지 않은 것처럼 보인다.
     notifyListeners();
 
-    try {
-      await player.stop();
-      await player.clearAudioSources();
-    } catch (_) {}
+    // 담는 일이 끝난 뒤에 비운다. 담기와 비우기가 겹치면 재생기의 순서와
+    // 문장 번호표가 어긋나, 읽는 문장과 노란 칸이 서로 달라진다.
+    await _withPlaylist(() async {
+      _playlistGen++;
+      _playlistEnd = i;
+      _playlistMap.clear();
+      try {
+        await player.stop();
+        await player.clearAudioSources();
+      } catch (_) {}
+    });
 
     final wasFinished = !_running;
     if (wasFinished) {
@@ -438,7 +480,7 @@ class NarrationEngine extends ChangeNotifier {
 
         final wav = (result['wav'] as List).cast<double>();
         final path =
-            '${dir.path}/${voiceFileName(i, item.text, signature)}';
+            '${dir.path}/${voiceFileName(i, item.text, voice, signature)}';
         writeWavFile(path, wav, _tts!.sampleRate);
         final t2 = DateTime.now();
 
@@ -452,6 +494,7 @@ class NarrationEngine extends ChangeNotifier {
         // 만드는 사이에 사용자가 다른 곳으로 건너뛰었을 수 있다
         if (item.status == SentenceStatus.synthesizing) {
           item.filePath = path;
+          item.voice = voice;
           item.status = SentenceStatus.ready;
         }
       } catch (e, st) {
@@ -517,55 +560,71 @@ class NarrationEngine extends ChangeNotifier {
 
   /// 준비된 문장을 순서대로 재생목록에 밀어 넣는다.
   Future<void> _pump(int gen) async {
-    if (_pumping) return;
+    // 이미 밀고 있으면 겹쳐 밀지 않는다. 대신 표시만 남겨, 밀던 쪽이
+    // 끝내면서 한 번 더 돌게 한다. 그러지 않으면 미는 사이에 들어온
+    // 자리 옮기기가 아무도 담아 주지 않아 그대로 멎는다.
+    if (_pumping) {
+      _pumpAgain = true;
+      return;
+    }
     _pumping = true;
     try {
-      while (gen == _generation && _playlistEnd < _items.length) {
-        final it = _items[_playlistEnd];
-        if (it.status == SentenceStatus.failed) {
-          _playlistEnd++; // 실패한 문장은 건너뛴다
-          continue;
-        }
-        if (it.status != SentenceStatus.ready || it.filePath == null) break;
+      do {
+        _pumpAgain = false;
+        final pg = _playlistGen;
+        while (gen == _generation &&
+            pg == _playlistGen &&
+            _playlistEnd < _items.length) {
+          final it = _items[_playlistEnd];
+          if (it.status == SentenceStatus.failed) {
+            _playlistEnd++; // 실패한 문장은 건너뛴다
+            continue;
+          }
+          if (it.status != SentenceStatus.ready || it.filePath == null) break;
 
-        await _enqueue(gen, it);
-        if (gen != _generation) return;
-        _playlistEnd++;
-      }
+          await _enqueue(gen, pg, it);
+          if (gen != _generation || pg != _playlistGen) break;
+          _playlistEnd++;
+        }
+      } while (_pumpAgain && gen == _generation);
     } finally {
       _pumping = false;
     }
   }
 
-  Future<void> _enqueue(int gen, SentenceItem item) async {
-    final source = AudioSource.file(item.filePath!);
-    try {
-      if (player.sequence.isEmpty) {
-        _playlistMap.add(item.index);
-        // 목록에는 넣되, 준비가 끝나기 전에는 재생을 시작하지 않는다
-        await player.setAudioSources([source]);
-        if (gen != _generation) return;
-        await _startPlaybackIfReady(gen);
-      } else {
-        _playlistMap.add(item.index);
-        await player.addAudioSource(source);
-        if (gen != _generation) return;
-        if (_stalled && _warmOk) {
-          // 앞 문장이 끝나 멈춰 있었다면 방금 넣은 문장부터 이어서 재생.
-          // 손수 세워 둔 상태라면 자리만 잡아 두고 읽지는 않는다.
-          _stalled = false;
-          await player.seek(Duration.zero, index: _playlistMap.length - 1);
-          if (!_userPaused) await player.play();
-          if (gen != _generation) return;
-          // 알림이 오지 않을 수 있으므로 직접 맞춰 둔다
-          _markPlaying(item.index);
+  Future<void> _enqueue(int gen, int pg, SentenceItem item) async {
+    return _withPlaylist(() async {
+      // 줄을 서서 들어왔으니, 기다리는 사이에 목록이 비워졌을 수 있다.
+      if (gen != _generation || pg != _playlistGen) return;
+      final source = AudioSource.file(item.filePath!);
+      try {
+        if (player.sequence.isEmpty) {
+          _playlistMap.add(item.index);
+          // 목록에는 넣되, 준비가 끝나기 전에는 재생을 시작하지 않는다
+          await player.setAudioSources([source]);
+          if (gen != _generation || pg != _playlistGen) return;
+          await _startPlaybackIfReady(gen);
+        } else {
+          _playlistMap.add(item.index);
+          await player.addAudioSource(source);
+          if (gen != _generation || pg != _playlistGen) return;
+          if (_stalled && _warmOk) {
+            // 앞 문장이 끝나 멈춰 있었다면 방금 넣은 문장부터 이어서 재생.
+            // 손수 세워 둔 상태라면 자리만 잡아 두고 읽지는 않는다.
+            _stalled = false;
+            await player.seek(Duration.zero, index: _playlistMap.length - 1);
+            if (!_userPaused) await player.play();
+            if (gen != _generation || pg != _playlistGen) return;
+            // 알림이 오지 않을 수 있으므로 직접 맞춰 둔다
+            _markPlaying(item.index);
+          }
         }
+      } catch (e, st) {
+        logger.e('재생 대기열 추가 실패', error: e, stackTrace: st);
+        _error = '$e';
+        notifyListeners();
       }
-    } catch (e, st) {
-      logger.e('재생 대기열 추가 실패', error: e, stackTrace: st);
-      _error = '$e';
-      notifyListeners();
-    }
+    });
   }
 
   // ------------------------------------------------------------- 재생 추적
@@ -625,8 +684,11 @@ class NarrationEngine extends ChangeNotifier {
   /// 전에는 만든 시각을 붙였고 짝은 메모리 안의 표에만 있었다 — 앱을 끄면
   /// 표가 사라져 전부 다시 만들었다.
   ///
-  ///   s0007_a1b2c3d4_e5f6a7b8.wav
-  ///        └ 문장 번호  └ 글자   └ 설정
+  ///   s0007_a1b2c3d4_F2_e5f6a7b8.wav
+  ///        └ 문장 번호  └ 글자   └ 목소리 └ 나머지 설정
+  ///
+  /// 목소리만 줄이지 않고 그대로 적는다. 화면 아래 얼굴이 "지금 들리는
+  /// 목소리"를 따라야 하는데, 줄인 표에서는 되읽을 수 없기 때문이다.
   ///
   /// 설정도 이름에 담지만, **가져다 쓸지는 설정으로 가리지 않는다.**
   /// 있으면 쓴다 — 목소리를 바꿨다고 이미 만들어 둔 것을 못 본 척하고
@@ -634,8 +696,43 @@ class NarrationEngine extends ChangeNotifier {
   /// 같은 문장의 여러 벌이 서로 덮어쓰지 않게 하고, 지금 설정으로 만든 것이
   /// 있으면 그쪽을 먼저 고르기 위해서다.
   @visibleForTesting
-  static String voiceFileName(int index, String text, String signature) =>
-      '${voiceFilePrefix(index, text)}_${tag(signature)}.wav';
+  static String voiceFileName(
+          int index, String text, String voice, String signature) =>
+      '${voiceFilePrefix(index, text)}_${voice}_${tag(signature)}.wav';
+
+  /// 쓸 수 있는 목소리 이름들
+  static const voices = ['M1', 'M2', 'M3', 'M4', 'M5',
+                         'F1', 'F2', 'F3', 'F4', 'F5'];
+
+  /// 파일 이름에서 목소리를 되읽는다. 옛 이름(목소리를 안 적던 것)이면 null.
+  @visibleForTesting
+  static String? voiceOfFileName(String name) {
+    final parts = name.replaceAll('.wav', '').split('_');
+    return parts.length >= 4 ? parts[2] : null;
+  }
+
+  /// 목소리를 안 적던 옛 이름에서 목소리를 되찾아 본다.
+  ///
+  /// 옛 이름의 마지막 토막은 설정을 통째로 줄인 표라 그대로는 되읽을 수
+  /// 없다. 목소리 열 가지와 품질 열한 단계를 대입해 같은 표가 나오는지
+  /// 맞춰 본다. 품질도 함께 대입하는 것은, 목소리를 바꾼 사람은 품질도
+  /// 바꿔 봤을 가능성이 높기 때문이다.
+  ///
+  /// 언어나 속도가 그때와 다르면 못 찾는다 — 그때는 null 이고, 화면은
+  /// 설정의 목소리를 보여 준다.
+  String? _legacyVoiceOf(String name) {
+    final parts = name.replaceAll('.wav', '').split('_');
+    if (parts.length != 3) return null;
+    final want = parts[2];
+    for (final v in voices) {
+      for (var st = 2; st <= 12; st++) {
+        final sig =
+            signatureOf(voice: v, lang: _lang, speed: _speed, steps: st);
+        if (tag(sig) == want) return v;
+      }
+    }
+    return null;
+  }
 
   /// 설정을 뺀 앞부분. 이것만 같으면 같은 문장의 음성이다.
   @visibleForTesting
@@ -643,26 +740,29 @@ class NarrationEngine extends ChangeNotifier {
       's${index.toString().padLeft(4, '0')}_${tag(text)}';
 
   /// 폴더에 있는 파일을 앞부분별로 모은다.
+  ///
+  /// 앞 두 토막(문장 번호 + 글자)만 본다. 그래야 목소리를 적기 전에 만든
+  /// 이름도 같은 자리에 모여, 예전에 만들어 둔 음성을 그대로 쓸 수 있다.
   static Map<String, List<String>> _byPrefix(Directory dir) {
     final out = <String, List<String>>{};
     for (final f in dir.listSync()) {
       if (f is! File) continue;
       final name = f.path.split('/').last;
       if (!name.endsWith('.wav')) continue;
-      final cut = name.lastIndexOf('_');
-      if (cut <= 0) continue;
-      out.putIfAbsent(name.substring(0, cut), () => []).add(name);
+      final parts = name.split('_');
+      if (parts.length < 3) continue;
+      out.putIfAbsent('${parts[0]}_${parts[1]}', () => []).add(name);
     }
     return out;
   }
 
   /// 그 문장에 쓸 파일 하나를 고른다.
   /// 지금 설정으로 만든 것이 있으면 그것을, 없으면 아무거나 — 있으면 쓴다.
-  static String? _pickFileFor(
-      Map<String, List<String>> byPrefix, int i, String text, String sig) {
+  static String? _pickFileFor(Map<String, List<String>> byPrefix, int i,
+      String text, String voice, String sig) {
     final names = byPrefix[voiceFilePrefix(i, text)];
     if (names == null || names.isEmpty) return null;
-    final want = voiceFileName(i, text, sig);
+    final want = voiceFileName(i, text, voice, sig);
     return names.contains(want) ? want : names.first;
   }
 

@@ -1,7 +1,7 @@
 name: suto_a
 description: "22SUTO-A — Supertonic 3 on-device TTS for Android"
 publish_to: 'none'
-version: 0.3.1+25
+version: 0.3.2+26
 
 environment:
   sdk: ^3.5.0
@@ -31,11 +31,12 @@ flutter:
     - assets/onnx/
     - assets/voice_styles/
   fonts:
-    # JTBC — 본문 기본 글꼴. 무게가 한 벌뿐이라 굵기를 나누지 않는다.
-    # 본문 어디에도 fontWeight 를 주지 않아야 이 한 벌이 그대로 나온다.
-    - family: JTBC
+    # 에이투지체 SemiBold — 본문 기본 글꼴. 한 벌만 넣는다.
+    # 한글 11,172자를 모두 덮는다. 굵기를 나누지 않으므로 본문 어디에도
+    # fontWeight 를 주지 않아야 이 한 벌이 그대로 나온다.
+    - family: A2Z
       fonts:
-        - asset: assets/fonts/JTBC.otf
+        - asset: assets/fonts/A2Z-SemiBold.ttf
     # Panchang (Indian Type Foundry, Fontshare) — 숫자·영문 표시용.
     # 한글 자형이 없어 본문에는 쓰지 않는다.
     - family: Panchang

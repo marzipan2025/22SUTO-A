@@ -139,6 +139,27 @@ class _TTSPageState extends State<TTSPage> with WidgetsBindingObserver {
   int _lastScrolledIndex = -1;
   bool _userScrolling = false;
 
+  /// 목록이 마지막으로 움직인 때.
+  ///
+  /// 굴러가는 목록을 멈추려고 화면을 짚으면 그 손짓이 문장 탭으로도 잡힌다.
+  /// 세우려던 것뿐인데 그 자리가 읽히기 시작하면 당황스럽다. 방금까지
+  /// 움직이고 있었으면 탭을 흘려보낸다.
+  DateTime? _listMovedAt;
+
+  /// 멈춘 뒤 이만큼은 탭을 받지 않는다
+  static const _tapDeadZone = Duration(milliseconds: 350);
+
+  // ---- 머리글 ----
+  /// 두 화면이 같은 높이를 쓴다. 설정 단추(36dp)에 위아래 여백을 더한 값이라,
+  /// 이름표든 상태든 그 안에서 가운데로 선다.
+  static const _headerHeight = 52.0;
+  /// 왼쪽 끝에 붙는 단추 — 바깥쪽 여백은 두지 않는다
+  static const _headerLeftPad =
+      EdgeInsets.only(right: 12, top: 8, bottom: 8);
+  /// 오른쪽 끝에 붙는 단추
+  static const _headerRightPad =
+      EdgeInsets.only(left: 12, top: 8, bottom: 8);
+
   Settings _settings = Settings();
   bool _ready = false;
 
@@ -618,7 +639,7 @@ class _TTSPageState extends State<TTSPage> with WidgetsBindingObserver {
   }
 
   // ---- 스크롤 ----
-  void _autoScroll() {
+  void _autoScroll({bool animate = true}) {
     if (!_showList || _userScrolling || !_listController.hasClients) return;
     final i = _engine.currentIndex;
     if (i < 0 || i == _lastScrolledIndex) return;
@@ -626,15 +647,39 @@ class _TTSPageState extends State<TTSPage> with WidgetsBindingObserver {
     _lastScrolledIndex = i;
 
     // 현재 문장이 화면 위쪽에 오도록 (앞 한 항목만큼 여유를 둔다)
-    final target = _offsetOf(i, _cachedWidth) - _extentFor(i, _cachedWidth);
-    _listController.animateTo(
-      target.clamp(0.0, _listController.position.maxScrollExtent),
-      duration: const Duration(milliseconds: 350),
-      curve: Curves.easeOut,
-    );
+    final target = (_offsetOf(i, _cachedWidth) - _extentFor(i, _cachedWidth))
+        .clamp(0.0, _listController.position.maxScrollExtent);
+    if (animate) {
+      _listController.animateTo(
+        target,
+        duration: const Duration(milliseconds: 350),
+        curve: Curves.easeOut,
+      );
+    } else {
+      // 들어오자마자는 곧장 앉힌다. 맨 위에서부터 훑어 내려가는 것을
+      // 보여 줄 이유가 없다.
+      _listController.jumpTo(target);
+    }
   }
 
-  bool _onScrollNotification(UserScrollNotification n) {
+  /// 문장 목록으로 들어온 직후, 읽고 있는 자리로 곧장 앉힌다.
+  ///
+  /// 이 자리에서 바로 옮길 수는 없다 — 목록이 아직 만들어지지 않아 높이도
+  /// 폭도 모른다. 화면이 한 번 그려진 뒤에 옮긴다.
+  void _jumpToCurrent() {
+    _userScrolling = false;
+    _userScrollTimer?.cancel();
+    _lastScrolledIndex = -1;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || !_showList) return;
+      _autoScroll(animate: false);
+    });
+  }
+
+  bool _onScrollNotification(ScrollNotification n) {
+    // 굴러가는 동안(손으로 끌든 튕겨서 흐르든) 계속 찍어 둔다
+    if (n is ScrollUpdateNotification) _listMovedAt = DateTime.now();
+    if (n is! UserScrollNotification) return false;
     if (n.direction != ScrollDirection.idle) {
       _userScrolling = true;
       _userScrollTimer?.cancel();
@@ -834,6 +879,7 @@ class _TTSPageState extends State<TTSPage> with WidgetsBindingObserver {
         source != null &&
         _engine.sourceId == source.id) {
       if (mounted) setState(() => _showList = true);
+      _jumpToCurrent();
       return;
     }
 
@@ -855,6 +901,7 @@ class _TTSPageState extends State<TTSPage> with WidgetsBindingObserver {
       // 안 비우면 다음에 셀을 재생하려 할 때 계속 가로챈다.
       if (short.isNotEmpty) _shortController.clear();
     });
+    _jumpToCurrent();
     await _playback.invokeMethod('start', {
       'text': '읽을 준비 중...',
       'progress': '',
@@ -1117,62 +1164,66 @@ class _TTSPageState extends State<TTSPage> with WidgetsBindingObserver {
     return b.toString();
   }
 
+  /// 두 화면의 머리글.
+  ///
+  /// 왼쪽 자리(이름표 또는 뒤로), 가운데(진행 화면에서만), 오른쪽 설정.
+  /// 한 함수로 묶어 둬야 두 화면의 설정 단추가 같은 자리에 선다 — 따로
+  /// 짜 두었더니 가로로 8dp, 세로로도 어긋나 있었다.
   Widget _header() {
-    if (_showList) {
-      // 진행 화면 — 뒤로 · 지금 상태 · 설정
-      return Row(
+    return SizedBox(
+      height: _headerHeight,
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.center,
         children: [
-          _pixelTap(
-            onTap: _back,
-            child: const PixelIcon(kGlyphBack, cell: 4, color: kYellow),
-          ),
-          Expanded(child: _headerStatus()),
+          if (_showList)
+            // 뒤로 — 화면 왼쪽 끝에 붙는다 (아래 카드의 왼쪽 선과 나란히)
+            _pixelTap(
+              onTap: _back,
+              padding: _headerLeftPad,
+              child: const PixelIcon(kGlyphBack, cell: 4, color: kYellow),
+            )
+          else
+            Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text.rich(
+                  TextSpan(children: [
+                    TextSpan(
+                        text: '22',
+                        style: displayStyle(
+                            size: 24,
+                            color: Colors.white,
+                            weight: FontWeight.w700)),
+                    TextSpan(
+                        text: 'SUTO-A',
+                        style: displayStyle(
+                            size: 24, color: kYellow, weight: FontWeight.w700)),
+                  ]),
+                ),
+                const SizedBox(height: 2),
+                const Text('Supertonic 3 · 내 폰에서 바로 만드는 음성',
+                    style: TextStyle(fontSize: 13, color: kMuted)),
+              ],
+            ),
+          if (_showList)
+            Expanded(child: _headerStatus())
+          else
+            const Spacer(),
+          if (!_showList && _pickingFile)
+            Padding(
+              padding: const EdgeInsets.only(right: 8),
+              child:
+                  Text('여는 중', style: displayStyle(size: 12, color: kSlate)),
+            ),
+          // 설정 — 화면 오른쪽 끝에 붙는다
           _pixelTap(
             onTap: _openSettings,
+            padding: _headerRightPad,
             child: const PixelIcon(kGlyphSettings, cell: 4, color: kYellow),
           ),
         ],
-      );
-    }
-
-    // 입력 화면 — 이름표 · 설정
-    return Row(
-      crossAxisAlignment: CrossAxisAlignment.center,
-      children: [
-        Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Text.rich(
-              TextSpan(children: [
-                TextSpan(
-                    text: '22',
-                    style: displayStyle(
-                        size: 24, color: Colors.white, weight: FontWeight.w700)),
-                TextSpan(
-                    text: 'SUTO-A',
-                    style: displayStyle(
-                        size: 24, color: kYellow, weight: FontWeight.w700)),
-              ]),
-            ),
-            const SizedBox(height: 2),
-            const Text('Supertonic 3 · 내 폰에서 바로 만드는 음성',
-                style: TextStyle(fontSize: 13, color: kMuted)),
-          ],
-        ),
-        const Spacer(),
-        if (_pickingFile)
-          Padding(
-            padding: const EdgeInsets.only(right: 8),
-            child: Text('여는 중',
-                style: displayStyle(size: 12, color: kSlate)),
-          ),
-        _pixelTap(
-          onTap: _openSettings,
-          padding: const EdgeInsets.only(left: 12, top: 8, bottom: 8),
-          child: const PixelIcon(kGlyphSettings, cell: 4, color: kYellow),
-        ),
-      ],
+      ),
     );
   }
 
@@ -1512,7 +1563,7 @@ class _TTSPageState extends State<TTSPage> with WidgetsBindingObserver {
         _measureStyle = resolved;
         _extentCache.clear();
       }
-      return NotificationListener<UserScrollNotification>(
+      return NotificationListener<ScrollNotification>(
         onNotification: _onScrollNotification,
         child: PixelScrollMask(
           child: ListView.builder(
@@ -1539,6 +1590,12 @@ class _TTSPageState extends State<TTSPage> with WidgetsBindingObserver {
               padding: const EdgeInsets.symmetric(
                   horizontal: _itemSidePadding, vertical: _itemVerticalPadding / 2),
               onTap: () {
+                // 목록을 세우려고 짚은 손짓이면 읽는 자리를 옮기지 않는다
+                final moved = _listMovedAt;
+                if (moved != null &&
+                    DateTime.now().difference(moved) < _tapDeadZone) {
+                  return;
+                }
                 _lastScrolledIndex = i;
                 _engine.seekToUnit(i);
               },

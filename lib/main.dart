@@ -1350,7 +1350,9 @@ class _TTSPageState extends State<TTSPage> with WidgetsBindingObserver {
         // 그림 윗선에 맞춰 시작한다. 지우기 가위표도 같은 눈금·같은 높이.
         return PixelCard(
           fill: skin.fill,
-          padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
+          // 위아래는 픽셀 눈금(4dp)의 네 배. 글꼴이 두꺼워지면서 10dp 로는
+          // 글이 카드에 눌린 듯 보였다.
+          padding: const EdgeInsets.fromLTRB(12, 16, 12, 16),
           // 아직 고르지 않은 글은 한 번 눌러 고르고, 이미 고른 글(노란 카드)을
           // 다시 누르면 바로 그 글로 들어간다 — 아래 버튼까지 갈 필요가 없다.
           onTap: () {

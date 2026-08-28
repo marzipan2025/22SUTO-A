@@ -75,6 +75,13 @@ class NarrationEngine extends ChangeNotifier {
   Directory? _sessionDir;
   bool _running = false;
   bool _stalled = false;
+
+  /// 사용자가 손수 세워 둔 상태인가.
+  ///
+  /// 세워 둔 채로 자리를 옮기면(타임라인을 만지면) 그 자리에 가서 서 있어야
+  /// 한다. 손을 떼자마자 저절로 읽기 시작하면 놀란다. 재생기의 playing 만
+  /// 보면 안 된다 — 다음 문장을 만드는 동안에도 잠깐씩 멎기 때문이다.
+  bool _userPaused = false;
   bool _pumping = false;
   int _warmupTarget = 0; // 재생 시작 전에 준비해야 할 문장 수
   bool _warmOk = true; // 재생을 시작해도 되는지
@@ -93,8 +100,19 @@ class NarrationEngine extends ChangeNotifier {
   int get total => _items.length;
   int get doneCount =>
       _items.where((e) => e.status == SentenceStatus.done).length;
-  int get readyCount =>
-      _items.where((e) => e.status == SentenceStatus.ready).length;
+  /// 지금 자리부터 **앞쪽으로** 준비돼 있는 문장 수 — 곧 들을 것들이다.
+  ///
+  /// 뒤쪽의 준비분까지 세면 안 된다. 디스크에서 되찾은 음성이 글 곳곳에
+  /// 흩어져 있으면 그 수가 금세 상한을 넘고, 그러면 합성이 통째로 쉬어
+  /// 정작 필요한 문장이 영영 만들어지지 않는다.
+  int get readyCount {
+    final from = _currentIndex < 0 ? 0 : _currentIndex;
+    var n = 0;
+    for (var i = from; i < _items.length; i++) {
+      if (_items[i].status == SentenceStatus.ready) n++;
+    }
+    return n;
+  }
 
   /// 현재 문장이 바뀔 때 호출 (알림 문구 갱신용)
   void Function(SentenceItem item)? onSentenceChanged;
@@ -161,6 +179,7 @@ class NarrationEngine extends ChangeNotifier {
 
     final gen = ++_generation;
     _error = null;
+    _userPaused = false;
     _sourceId = sourceId;
 
     final cleaned = cleanText(text).trim();
@@ -293,12 +312,17 @@ class NarrationEngine extends ChangeNotifier {
   Future<void> stop() => park();
 
   Future<void> pause() async {
+    _userPaused = true;
     await player.pause();
     notifyListeners();
   }
 
   Future<void> resume() async {
+    _userPaused = false;
     await player.play();
+    // 세워 둔 사이에 다음 문장이 다 만들어져 대기열에 들어와 있을 수 있다.
+    // 그때는 재생기가 아직 그 자리에 서 있지 않으므로 밀어 준다.
+    unawaited(_pump(_generation));
     notifyListeners();
   }
 
@@ -474,10 +498,17 @@ class NarrationEngine extends ChangeNotifier {
 
   Future<void> _startPlaybackIfReady(int gen) async {
     if (!_warmOk || gen != _generation) return;
+    // 손수 세워 둔 것은 그대로 둔다. 자리만 옮기고 서 있는다.
+    if (_userPaused) return;
     if (player.sequence.isEmpty || player.playing) return;
     try {
       _stalled = false;
       await player.play();
+      if (gen != _generation) return;
+      if (_playlistMap.isNotEmpty) {
+        final at = player.currentIndex ?? 0;
+        if (at >= 0 && at < _playlistMap.length) _markPlaying(_playlistMap[at]);
+      }
       _setStatus('재생 중');
     } catch (e, st) {
       logger.e('재생 시작 실패', error: e, stackTrace: st);
@@ -520,10 +551,14 @@ class NarrationEngine extends ChangeNotifier {
         await player.addAudioSource(source);
         if (gen != _generation) return;
         if (_stalled && _warmOk) {
-          // 앞 문장이 끝나 멈춰 있었다면 방금 넣은 문장부터 이어서 재생
+          // 앞 문장이 끝나 멈춰 있었다면 방금 넣은 문장부터 이어서 재생.
+          // 손수 세워 둔 상태라면 자리만 잡아 두고 읽지는 않는다.
           _stalled = false;
           await player.seek(Duration.zero, index: _playlistMap.length - 1);
-          await player.play();
+          if (!_userPaused) await player.play();
+          if (gen != _generation) return;
+          // 알림이 오지 않을 수 있으므로 직접 맞춰 둔다
+          _markPlaying(item.index);
         }
       }
     } catch (e, st) {
@@ -540,8 +575,17 @@ class NarrationEngine extends ChangeNotifier {
         playlistIndex >= _playlistMap.length) {
       return;
     }
-    final index = _playlistMap[playlistIndex];
-    if (index >= _items.length) return;
+    _markPlaying(_playlistMap[playlistIndex]);
+  }
+
+  /// 지금 읽고 있는 문장을 화면에 반영한다.
+  ///
+  /// 재생기의 인덱스 알림만 믿으면 안 된다. 멈춰 있다가 새 문장을 넣고 그
+  /// 자리로 건너뛸 때, 재생기의 인덱스가 이미 그 값이면 알림이 오지 않는다.
+  /// 그러면 소리는 새 문장인데 화면은 앞 문장에 노랗게 남는다.
+  /// 자리를 옮기는 쪽에서 직접 불러 준다.
+  void _markPlaying(int index) {
+    if (index < 0 || index >= _items.length) return;
 
     for (var i = 0; i < _items.length; i++) {
       final it = _items[i];

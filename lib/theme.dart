@@ -375,6 +375,9 @@ class MadeStrip extends StatelessWidget {
     this.gap = 1,
     this.on = kYellow,
     this.off = kBg,
+    this.onSeek,
+    this.touchHeight = 0,
+    this.current,
   });
 
   /// 문장마다 음성이 있는지
@@ -387,18 +390,52 @@ class MadeStrip extends StatelessWidget {
   final Color on;
   final Color off;
 
+  /// 넘기면 띠를 눌러 그 자리로 갈 수 있다. 누른 칸이 맡은 첫 문장 번호가 온다.
+  ///
+  /// 손잡이(플레이헤드)는 두지 않는다 — 어디에 있는지는 문장 목록이 이미
+  /// 말해 주고, 이 띠는 어디에 무엇이 있는지를 보여 주는 자리다.
+  final void Function(int index)? onSeek;
+
+  /// 지금 서 있는 문장. 그 칸만 흰빛으로 세운다.
+  final int? current;
+
+  /// 손가락이 닿는 높이. 띠 자체는 [cell] 만큼 얇으므로 누르는 자리는
+  /// 따로 넉넉히 잡는다. 0이면 누를 수 없는 띠다.
+  final double touchHeight;
+
   @override
   Widget build(BuildContext context) {
     if (flags.isEmpty) return const SizedBox.shrink();
     return SizedBox(
-      height: cell,
+      height: touchHeight > cell ? touchHeight : cell,
       child: LayoutBuilder(builder: (context, c) {
         // 한 줄에 몇 칸이 들어가나
         final fit = ((c.maxWidth + gap) / (cell + gap)).floor();
         if (fit < 1) return const SizedBox.shrink();
-        return CustomPaint(
-          size: Size(c.maxWidth, cell),
-          painter: _StripPainter(flags, fit, cell, gap, on, off),
+        final n = flags.length < fit ? flags.length : fit;
+
+        final strip = Center(
+          child: CustomPaint(
+            size: Size(c.maxWidth, cell),
+            painter: _StripPainter(flags, fit, cell, gap, on, off, current),
+          ),
+        );
+        final seek = onSeek;
+        if (seek == null) return strip;
+
+        // 누른 자리의 칸 → 그 칸이 맡은 첫 문장
+        void at(double x) {
+          final k = (x / (cell + gap)).floor().clamp(0, n - 1);
+          seek(k * flags.length ~/ n);
+        }
+
+        return GestureDetector(
+          behavior: HitTestBehavior.opaque,
+          onTapDown: (d) => at(d.localPosition.dx),
+          // 누른 채 쓸면 따라 움직인다
+          onHorizontalDragStart: (d) => at(d.localPosition.dx),
+          onHorizontalDragUpdate: (d) => at(d.localPosition.dx),
+          child: strip,
         );
       }),
     );
@@ -406,7 +443,8 @@ class MadeStrip extends StatelessWidget {
 }
 
 class _StripPainter extends CustomPainter {
-  _StripPainter(this.flags, this.fit, this.cell, this.gap, this.on, this.off);
+  _StripPainter(this.flags, this.fit, this.cell, this.gap, this.on, this.off,
+      this.current);
 
   final List<bool> flags;
   final int fit;
@@ -414,12 +452,18 @@ class _StripPainter extends CustomPainter {
   final double gap;
   final Color on;
   final Color off;
+  final int? current;
 
   @override
   void paint(Canvas canvas, Size size) {
     final n = flags.length < fit ? flags.length : fit;
     final lit = Paint()..color = on;
     final dark = Paint()..color = off;
+    final here = Paint()..color = Colors.white;
+    // 지금 서 있는 문장이 든 칸
+    final at = current == null || flags.isEmpty
+        ? -1
+        : (current!.clamp(0, flags.length - 1) * n ~/ flags.length);
 
     for (var k = 0; k < n; k++) {
       // 이 칸이 맡은 문장 구간
@@ -434,13 +478,14 @@ class _StripPainter extends CustomPainter {
       }
       canvas.drawRect(
         Rect.fromLTWH(k * (cell + gap), 0, cell, cell),
-        any ? lit : dark,
+        k == at ? here : (any ? lit : dark),
       );
     }
   }
 
   @override
   bool shouldRepaint(_StripPainter old) =>
+      old.current != current ||
       old.fit != fit ||
       old.on != on ||
       old.off != off ||

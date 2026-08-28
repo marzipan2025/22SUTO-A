@@ -160,6 +160,12 @@ class _TTSPageState extends State<TTSPage> with WidgetsBindingObserver {
   /// 만들어둔 음성이 차지하는 크기 (설정에서 보여준다)
   int? _voiceBytes;
 
+  /// 타임라인을 쓸 때 마지막으로 가리킨 자리. 쓰는 동안 매 손가락마다
+  /// 옮기면 그때마다 소리를 멈추고 다시 물리게 되어 버벅인다. 잠깐 모았다가
+  /// 손이 멎으면 한 번만 옮긴다.
+  int? _scrubTo;
+  Timer? _scrubTimer;
+
   /// 글마다 문장별로 음성을 만들어 뒀는지. 목록 카드 아래 띠에 쓴다.
   /// 폴더를 훑어야 알 수 있으므로 그때그때 재지 않고 모아 두고 쓴다.
   Map<String, List<bool>> _made = {};
@@ -185,6 +191,7 @@ class _TTSPageState extends State<TTSPage> with WidgetsBindingObserver {
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
     _pickWatchdog?.cancel();
+    _scrubTimer?.cancel();
     _intentSub?.cancel();
     _saveTimer?.cancel();
     _userScrollTimer?.cancel();
@@ -242,6 +249,23 @@ class _TTSPageState extends State<TTSPage> with WidgetsBindingObserver {
       logger.e('모델 로드 실패', error: e, stackTrace: st);
       if (mounted) setState(() {});
     }
+  }
+
+  /// 타임라인에서 자리를 가리켰을 때.
+  ///
+  /// 흰 점은 손가락을 곧바로 따라온다. 소리를 옮기는 것은 손이 멎은 뒤
+  /// 한 번만 한다 — 쓰는 동안 매번 옮기면 그때마다 소리를 멈추고 다시
+  /// 물리게 되어 버벅인다.
+  void _scrub(int index) {
+    if (_scrubTo == index) return;
+    setState(() => _scrubTo = index);
+    _scrubTimer?.cancel();
+    _scrubTimer = Timer(const Duration(milliseconds: 120), () {
+      final at = _scrubTo;
+      if (at == null) return;
+      if (mounted) setState(() => _scrubTo = null);
+      _engine.seekToUnit(at);
+    });
   }
 
   /// 목록 카드 아래 띠를 다시 잰다.
@@ -998,6 +1022,20 @@ class _TTSPageState extends State<TTSPage> with WidgetsBindingObserver {
               if (!_showList) ...[
                 _shortInputRow(),
                 const SizedBox(height: 12),
+              ],
+              if (_showList && _engine.items.isNotEmpty) ...[
+                // 타임라인. 목록 카드의 띠와 같은 얼굴이되, 여기서는 눌러서
+                // 그 자리로 갈 수 있다.
+                MadeStrip(
+                  flags: [
+                    for (final it in _engine.items) it.filePath != null,
+                  ],
+                  touchHeight: 28,
+                  // 쓰는 동안에는 손가락이 가리키는 자리를 보여 준다
+                  current: _scrubTo ?? _engine.currentIndex,
+                  onSeek: _scrub,
+                ),
+                const SizedBox(height: 4),
               ],
               _controls(),
               const SizedBox(height: 6),

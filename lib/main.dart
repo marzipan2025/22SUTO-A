@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:ui' as ui;
 import 'dart:io';
 
 import 'package:flutter/material.dart';
@@ -98,6 +99,11 @@ class _TTSPageState extends State<TTSPage> with WidgetsBindingObserver {
   /// 자리마다 달라 보이지 않게.
   /// 상태 그림이 차지하는 폭 (StatusIcon 이 늘 같은 크기로 잡아 둔다)
   static final _iconWidth = statusIconWidth(_iconCell);
+
+  /// 문장 카드 오른쪽 곁차림(케밥)이 차지하는 폭.
+  /// 점 셋(눈금 2 → 2dp)에 좌우 손짓 자리를 더한 값이다.
+  /// 본문 폭을 잴 때도 이만큼 빼야 줄 수가 맞는다.
+  static const _kebabWidth = _iconGap + 2 + _itemSidePadding;
 
   /// 입력 화면 목록의 그림 자리 — 붙여넣기·파일 중 넓은 쪽에 맞춘다
   static final _sourceIconWidth = [
@@ -243,8 +249,85 @@ class _TTSPageState extends State<TTSPage> with WidgetsBindingObserver {
   /// 얼굴은 그림마다 세로/가로 비가 달라(0.95~1.47) 폭으로 맞추면 키가
   /// 들쭉날쭉해진다. 고르개에서는 **키를 맞추고** 폭은 그림이 정한다.
   static const _pickFace = 66.0; // 얼굴 키
-  static const _pickStep = 70.0; // 얼굴 사이 걸음 (= 한 칸의 폭)
   static const _pickParen = 74.0; // 괄호 키
+
+  /// 이웃한 두 얼굴 사이에 두고 싶은 빈틈.
+  static const _pickGapEven = 17.5;
+
+  /// REMAKE 시트가 만지는 임시 설정. 떠 있는 동안만 있고, 전역 설정을
+  /// 건드리지 않는다. 시트가 닫히면 비운다.
+  Settings? _draft;
+
+  /// 지금 시트가 다루는 설정 — 평소엔 전역, REMAKE 때는 임시본이다.
+  Settings get _sheet => _draft ?? _settings;
+
+  /// 얼굴마다 세로/가로 비. 그림이 바뀌어도 따라가도록 파일에서 직접 잰다
+  /// — 값을 코드에 박아 두면 그림을 갈 때마다 소리 없이 어긋난다.
+  final Map<String, double> _faceRatio = {};
+
+  Future<void> _measureFaces() async {
+    for (final v in Settings.voices) {
+      final name = _voiceFaces[v];
+      if (name == null) continue;
+      try {
+        final done = Completer<ui.Image>();
+        final stream =
+            AssetImage('assets/char/$name.png').resolve(ImageConfiguration.empty);
+        late ImageStreamListener listener;
+        listener = ImageStreamListener((info, _) {
+          stream.removeListener(listener);
+          if (!done.isCompleted) done.complete(info.image);
+        }, onError: (e, _) {
+          stream.removeListener(listener);
+          if (!done.isCompleted) done.completeError(e);
+        });
+        stream.addListener(listener);
+        final img = await done.future;
+        _faceRatio[v] = img.height / img.width;
+      } catch (_) {}
+    }
+    if (mounted) setState(() {});
+  }
+
+  /// 얼굴 사이 빈틈을 눈에 고르게 만드는 자리표.
+  ///
+  /// 캐러셀의 칸 폭은 하나로 고정인데 얼굴 폭은 45~70dp 로 제각각이다
+  /// (아프로·긴머리는 넓고 짧은머리는 좁다). 칸 가운데에 그대로 세우면
+  /// 이웃 사이 빈틈이 4dp 에서 22dp 까지 벌어진다.
+  ///
+  /// 그래서 얼굴을 칸 가운데가 아니라 조금씩 어긋난 자리에 세운다 —
+  /// 좁은 얼굴은 안쪽으로, 넓은 얼굴은 바깥으로. 이웃한 두 얼굴의
+  /// 가운데 사이를 늘 `빈틈 + (두 폭의 평균)` 으로 두면 빈틈이 같아진다.
+  ///
+  /// 칸 폭을 `빈틈 + 평균 폭` 으로 잡으면 열 개를 한 바퀴 돌았을 때
+  /// 어긋남의 합이 정확히 0 이 된다 — 끝없이 도는 캐러셀이라 이음매가
+  /// 생기지 않아야 한다.
+  ({double step, List<double> shift}) _pickLayout() {
+    final voices = Settings.voices;
+    final w = <double>[];
+    for (final v in voices) {
+      final r = _faceRatio[v];
+      if (r == null || r <= 0) {
+        // 아직 재지 못했다 — 고르게 벌려 두고 기다린다
+        return (
+          step: _pickGapEven + _pickFace,
+          shift: List.filled(voices.length, 0),
+        );
+      }
+      w.add(_pickFace / r);
+    }
+    final mean = w.reduce((a, b) => a + b) / w.length;
+    final shift = <double>[0];
+    for (var i = 0; i < w.length - 1; i++) {
+      shift.add(shift[i] + (w[i] + w[i + 1]) / 2 - mean);
+    }
+    // 한쪽으로 쏠리지 않게 가운데를 0 으로 맞춘다
+    final centre = shift.reduce((a, b) => a + b) / shift.length;
+    return (
+      step: _pickGapEven + mean,
+      shift: [for (final v in shift) v - centre],
+    );
+  }
 
   /// 괄호 사이. 걸음보다 넓어 이웃 얼굴에 걸쳐 얹히지만, 가장 넓은 얼굴
   /// (MIA, 70dp)도 넉넉히 감싸려면 이만큼은 벌어져야 한다.
@@ -258,6 +341,7 @@ class _TTSPageState extends State<TTSPage> with WidgetsBindingObserver {
     super.initState();
     _engine.addListener(_onEngineChanged);
     _shortFocus.addListener(_onShortFocusChanged);
+    unawaited(_measureFaces());
     _engine.onSentenceChanged = _onSentenceChanged;
     _playback.setMethodCallHandler(_onPlaybackCall);
     WidgetsBinding.instance.addObserver(this);
@@ -684,7 +768,10 @@ class _TTSPageState extends State<TTSPage> with WidgetsBindingObserver {
 
   void _onEngineChanged() {
     if (mounted) setState(() {});
-    _autoScroll();
+    // 스크롤은 다음 프레임에 맡긴다. 이 알림은 재생기·합성기 어디서든
+    // 날아와 화면을 다시 짜는 중간에 떨어질 수 있는데, 그때 목록을
+    // 건드리면 이미 트리에서 빠진 스크롤뷰를 더듬는다.
+    _scheduleAutoScroll();
   }
 
   void _onSentenceChanged(SentenceItem item) {
@@ -721,7 +808,12 @@ class _TTSPageState extends State<TTSPage> with WidgetsBindingObserver {
 
     // 항목 안쪽 구성: 좌우 여백, 상태 그림, 그림과 본문 사이 간격
     // (셀 번호는 본문 아래 별도 줄이라 본문 폭에는 영향이 없다)
-    final textWidth = (listWidth - _itemSidePadding * 2 - _iconWidth - _iconGap)
+    // 오른쪽 케밥이 차지하는 폭도 빼야 실제로 그려지는 줄 수와 맞는다
+    final textWidth = (listWidth -
+            _itemSidePadding -
+            _iconWidth -
+            _iconGap -
+            _kebabWidth)
         .clamp(40.0, listWidth);
 
     // 본문 아래 셀 번호가 한 줄을 차지하므로 더미 한 줄을 붙여서 같이 잰다.
@@ -757,26 +849,53 @@ class _TTSPageState extends State<TTSPage> with WidgetsBindingObserver {
   }
 
   // ---- 스크롤 ----
+  /// 다음 프레임이 끝난 뒤에 자리를 옮긴다.
+  ///
+  /// 엔진의 알림은 프레임 중간에도 떨어진다. 그 자리에서 목록을 옮기면
+  /// 스크롤뷰가 트리에서 빠지는 중일 때 이미 없는 것을 더듬는다:
+  ///
+  ///   findRenderObject() … _ElementLifecycle.inactive
+  ///   ScrollableState.setIgnorePointer ← ScrollPosition.beginActivity
+  ///   ← animateTo ← _autoScroll ← _onEngineChanged
+  ///
+  /// 겹쳐 부르는 것은 표시만 남기고 한 번만 돌린다.
+  bool _scrollPending = false;
+
+  void _scheduleAutoScroll() {
+    if (_scrollPending) return;
+    _scrollPending = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _scrollPending = false;
+      if (mounted) _autoScroll();
+    });
+  }
+
   void _autoScroll({bool animate = true}) {
-    if (!_showList || _userScrolling || !_listController.hasClients) return;
+    if (!mounted || !_showList || _userScrolling) return;
+    if (!_listController.hasClients) return;
     final i = _engine.currentIndex;
     if (i < 0 || i == _lastScrolledIndex) return;
     if (_cachedWidth <= 0) return;
-    _lastScrolledIndex = i;
 
     // 현재 문장이 화면 위쪽에 오도록 (앞 한 항목만큼 여유를 둔다)
     final target = (_offsetOf(i, _cachedWidth) - _extentFor(i, _cachedWidth))
         .clamp(0.0, _listController.position.maxScrollExtent);
-    if (animate) {
-      _listController.animateTo(
-        target,
-        duration: const Duration(milliseconds: 350),
-        curve: Curves.easeOut,
-      );
-    } else {
-      // 들어오자마자는 곧장 앉힌다. 맨 위에서부터 훑어 내려가는 것을
-      // 보여 줄 이유가 없다.
-      _listController.jumpTo(target);
+    try {
+      if (animate) {
+        _listController.animateTo(
+          target,
+          duration: const Duration(milliseconds: 350),
+          curve: Curves.easeOut,
+        );
+      } else {
+        // 들어오자마자는 곧장 앉힌다. 맨 위에서부터 훑어 내려가는 것을
+        // 보여 줄 이유가 없다.
+        _listController.jumpTo(target);
+      }
+      _lastScrolledIndex = i;
+    } catch (e) {
+      // 옮기지 못했으면 표시도 남기지 않는다 — 다음 알림에 다시 해 본다.
+      logger.w('목록을 옮기지 못했다: $e');
     }
   }
 
@@ -1097,6 +1216,23 @@ class _TTSPageState extends State<TTSPage> with WidgetsBindingObserver {
   /// 눈으로 알 수 있게 했다. 괄호는 자리에 붙박이로 두고 얼굴만 지나간다.
   Widget _voicePicker(PageController page, void Function(VoidCallback) update) {
     final voices = Settings.voices;
+    final shift = _pickLayout().shift;
+    final n = voices.length;
+    // 아직 붙지 않았을 때 기준이 되는 자리 — 지금 고른 목소리다
+    final home = _pickLoop + voices.indexOf(_sheet.voice).clamp(0, n - 1);
+
+    /// 지금 몇 번째 칸에 서 있는지 (쓸고 있는 중에는 소수)
+    double pageNow() => page.hasClients && page.position.haveDimensions
+        ? (page.page ?? home.toDouble())
+        : home.toDouble();
+
+    /// 그 자리의 어긋남. 칸과 칸 사이는 이어서 잇는다.
+    double shiftAt(double p) {
+      final lo = p.floor();
+      final t = p - lo;
+      return shift[((lo % n) + n) % n] * (1 - t) +
+          shift[(((lo + 1) % n) + n) % n] * t;
+    }
 
     // 부모(시트)의 좌우 여백 밖으로 나가 화면 폭을 그대로 쓴다.
     return SizedBox(
@@ -1112,34 +1248,40 @@ class _TTSPageState extends State<TTSPage> with WidgetsBindingObserver {
             itemCount: null,
             padEnds: true,
             onPageChanged: (i) =>
-                update(() => _settings.voice = voices[i % voices.length]),
+                update(() => _sheet.voice = voices[i % voices.length]),
             itemBuilder: (_, i) => AnimatedBuilder(
               animation: page,
               builder: (_, __) {
-                // 지금 몇 번째 칸에 서 있는지 (쓸고 있는 중에는 소수)
-                final at = page.hasClients && page.position.haveDimensions
-                    ? (page.page ?? i.toDouble())
-                    : i.toDouble();
-                final away = (at - i).abs().clamp(0.0, 1.0);
-                final name = _voiceFaces[voices[i % voices.length]];
+                final p = pageNow();
+                final away = (p - i).abs().clamp(0.0, 1.0);
+                final name = _voiceFaces[voices[i % n]];
                 if (name == null) return const SizedBox.shrink();
                 return Center(
-                  child: Opacity(
-                    opacity: 1 - 0.55 * away,
-                    child: Image.asset(
-                      'assets/char/$name.png',
-                      height: _pickFace * (1 - 0.18 * away),
-                      // 픽셀 그림이라 매끄럽게 줄이면 뭉갠다
-                      filterQuality: FilterQuality.none,
-                      isAntiAlias: false,
+                  // 칸 가운데가 아니라 빈틈이 고르게 보이는 자리에 세운다.
+                  // 거기서 지금 자리의 어긋남만큼 띠 전체를 도로 밀어,
+                  // 고른 얼굴이 늘 한가운데(=붙박이 괄호 사이)에 온다.
+                  child: Transform.translate(
+                    offset: Offset(shift[i % n] - shiftAt(p), 0),
+                    // 이웃을 줄여 그리지 않는다. 줄이면 그만큼 빈틈이
+                    // 넓어지는데 그 양이 얼굴 폭마다 달라, 애써 고르게
+                    // 맞춘 자리가 도로 흐트러진다. 가운데가 누구인지는
+                    // 흐리기와 괄호가 이미 말해 준다.
+                    child: Opacity(
+                      opacity: 1 - 0.55 * away,
+                      child: Image.asset(
+                        'assets/char/$name.png',
+                        height: _pickFace,
+                        // 픽셀 그림이라 매끄럽게 줄이면 뭉갠다
+                        filterQuality: FilterQuality.none,
+                        isAntiAlias: false,
+                      ),
                     ),
                   ),
                 );
               },
             ),
           ),
-          // 붙박이 괄호. 한 칸의 양 끝에 서서, 지나가는 얼굴 중
-          // 가운데 칸에 든 것을 감싼다.
+          // 괄호는 한가운데에 붙박이다. 움직이는 것은 얼굴 띠 쪽이다.
           IgnorePointer(
             child: Row(
               mainAxisAlignment: MainAxisAlignment.center,
@@ -1173,7 +1315,71 @@ class _TTSPageState extends State<TTSPage> with WidgetsBindingObserver {
   }
 
   // ---- 설정 시트 ----
-  void _openSettings() {
+  void _openSettings() => _openSheet(title: 'SETTINGS');
+
+  /// REMAKE — 문장 하나를 새 설정으로 다시 만든다.
+  void _openRemake(int index) {
+    // 지금 설정에서 출발하되, 전역은 건드리지 않는 임시본을 만진다
+    _draft = Settings(
+      voice: _settings.voice,
+      lang: _settings.lang,
+      speed: _settings.speed,
+      steps: _settings.steps,
+    );
+    _openSheet(
+      title: 'REMAKE',
+      onClosed: () => _draft = null,
+      footer: (ctx) => Row(
+        children: [
+          // 두 단추의 너비는 4 : 6
+          Expanded(
+            flex: 4,
+            child: _sheetButton(
+              'CANCEL',
+              color: kSlate,
+              onTap: () => Navigator.pop(ctx),
+            ),
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            flex: 6,
+            child: _sheetButton(
+              'CONFIRM',
+              color: kYellow,
+              onTap: () {
+                final d = _draft;
+                Navigator.pop(ctx);
+                if (d == null) return;
+                unawaited(_engine.remake(index,
+                    voice: d.voice, speed: d.speed, steps: d.steps));
+              },
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// 시트 아래에 서는 단추 하나
+  Widget _sheetButton(String label,
+      {required Color color, required VoidCallback onTap}) {
+    return PixelCard(
+      fill: color,
+      padding: const EdgeInsets.symmetric(vertical: 14),
+      onTap: onTap,
+      child: Center(
+        child: Text(label,
+            style: displayStyle(
+                size: 13, color: kOnLight, letterSpacing: 1.6)),
+      ),
+    );
+  }
+
+  void _openSheet({
+    required String title,
+    Widget Function(BuildContext)? footer,
+    VoidCallback? onClosed,
+  }) {
     // 시트가 떠 있는 동안 보여줄 값이라 열 때마다 다시 잰다
     NarrationEngine.voiceBytes().then((b) {
       if (mounted) setState(() => _voiceBytes = b);
@@ -1186,8 +1392,8 @@ class _TTSPageState extends State<TTSPage> with WidgetsBindingObserver {
       // 캐러셀은 끝없이 돈다. 한참 앞에서 시작해 어느 쪽으로 밀어도
       // 목록이 끊기지 않는다 — 자리 번호를 열로 나눈 나머지가 목소리다.
       initialPage:
-          _pickLoop + Settings.voices.indexOf(_settings.voice).clamp(0, 9),
-      viewportFraction: _pickStep / sheetWidth,
+          _pickLoop + Settings.voices.indexOf(_sheet.voice).clamp(0, 9),
+      viewportFraction: _pickLayout().step / sheetWidth,
     );
     showModalBottomSheet<void>(
       context: context,
@@ -1198,9 +1404,13 @@ class _TTSPageState extends State<TTSPage> with WidgetsBindingObserver {
         builder: (ctx, setSheet) {
           void update(VoidCallback change) {
             change();
-            _settings.clamp();
-            _applySettingsToEngine();
-            _scheduleSave();
+            _sheet.clamp();
+            // 임시본을 만지는 중이면 엔진에도 저장소에도 옮기지 않는다.
+            // CONFIRM 을 눌러야 비로소 그 문장 하나에 쓰인다.
+            if (_draft == null) {
+              _applySettingsToEngine();
+              _scheduleSave();
+            }
             setSheet(() {});
             if (mounted) setState(() {});
           }
@@ -1217,7 +1427,7 @@ class _TTSPageState extends State<TTSPage> with WidgetsBindingObserver {
                 ),
                 const SizedBox(height: 20),
                 Center(
-                  child: Text('SETTINGS',
+                  child: Text(title,
                       style: displayStyle(
                           size: 15, color: kYellow, letterSpacing: 2.4)),
                 ),
@@ -1226,37 +1436,44 @@ class _TTSPageState extends State<TTSPage> with WidgetsBindingObserver {
                 const SizedBox(height: 10),
                 Center(
                   child: Text(
-                    _voiceNames[_settings.voice] ?? '',
+                    _voiceNames[_sheet.voice] ?? '',
                     style: displayStyle(
                         size: 14, color: Colors.white, letterSpacing: 2.4),
                   ),
                 ),
                 const SizedBox(height: 18),
-                _slider('SPEED', _settings.speed.toStringAsFixed(2),
-                    _settings.speed, 0.7, 2.0,
-                    (v) => update(() => _settings.speed = v)),
+                _slider('SPEED', _sheet.speed.toStringAsFixed(2),
+                    _sheet.speed, 0.7, 2.0,
+                    (v) => update(() => _sheet.speed = v)),
                 const SizedBox(height: 14),
-                _slider('QUALITY', '${_settings.steps}',
-                    _settings.steps.toDouble(), 2, 12,
-                    (v) => update(() => _settings.steps = v.round())),
+                _slider('QUALITY', '${_sheet.steps}',
+                    _sheet.steps.toDouble(), 2, 12,
+                    (v) => update(() => _sheet.steps = v.round())),
                 const SizedBox(height: 18),
                 Container(height: 2, color: kLine),
                 const SizedBox(height: 16),
                 // 둘 다 짧아서 나란히 놓아도 넉넉하다
-                Row(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Expanded(child: _voiceRow(setSheet)),
-                    const SizedBox(width: 18),
-                    Expanded(child: _updateRow(setSheet)),
-                  ],
-                ),
+                if (footer != null)
+                  footer(ctx)
+                else
+                  Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Expanded(child: _voiceRow(setSheet)),
+                      const SizedBox(width: 18),
+                      Expanded(child: _updateRow(setSheet)),
+                    ],
+                  ),
               ],
             ),
           );
         },
       ),
-    ).whenComplete(page.dispose);
+    ).whenComplete(() {
+      page.dispose();
+      onClosed?.call();
+      if (mounted) setState(() {});
+    });
   }
 
   // ---------------------------------------------------------------- UI
@@ -1852,8 +2069,9 @@ class _TTSPageState extends State<TTSPage> with WidgetsBindingObserver {
             // 문장을 누르면 그 지점부터 읽고, 뒤 문장들을 이어서 합성한다
             child: PixelCard(
               fill: skin.fill,
-              padding: const EdgeInsets.symmetric(
-                  horizontal: _itemSidePadding, vertical: _itemVerticalPadding / 2),
+              // 오른쪽 여백은 케밥이 손짓 받는 자리로 쓴다
+              padding: const EdgeInsets.fromLTRB(_itemSidePadding,
+                  _itemVerticalPadding / 2, 0, _itemVerticalPadding / 2),
               onTap: () {
                 // 목록을 세우려고 짚은 손짓이면 읽는 자리를 옮기지 않는다
                 final moved = _listMovedAt;
@@ -1886,6 +2104,22 @@ class _TTSPageState extends State<TTSPage> with WidgetsBindingObserver {
                             style: _numberStyle.copyWith(
                                 color: skin.ink.withValues(alpha: 0.45))),
                       ],
+                    ),
+                  ),
+                  // 곁차림(케밥) — 이 문장만 다시 만든다.
+                  //
+                  // 보이는 것은 왼쪽 상태 그림과 키가 같은 점 셋뿐이지만,
+                  // 누르는 자리는 카드 모서리까지 넉넉히 잡는다. 안쪽
+                  // 여백을 손짓이 받는 자리로 쓰고, 그만큼 바깥으로
+                  // 밀어내 글의 너비는 그대로 둔다.
+                  GestureDetector(
+                    behavior: HitTestBehavior.opaque,
+                    onTap: () => _openRemake(i),
+                    child: Padding(
+                      padding: const EdgeInsets.fromLTRB(
+                          _iconGap, 3, _itemSidePadding, 10),
+                      child: PixelIcon(kGlyphKebab,
+                          cell: 2, color: skin.ink.withValues(alpha: 0.55)),
                     ),
                   ),
                 ],

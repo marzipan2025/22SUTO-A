@@ -328,6 +328,20 @@ Path unionOf(PixelGlyph glyph) {
 
 final _unionCache = <PixelGlyph, Path>{};
 
+/// 점 셋 — 문장 셀의 곁차림(케밥).
+///
+/// 밑그림(kebabmenu.svg)의 점 셋을 좌표 그대로 옮겼다. 빈 가장자리를
+/// 잘라 2x10 이라, 눈금 2 로 그리면 왼쪽 상태 그림과 키가 같아진다.
+const kGlyphKebab = PixelGlyph(
+  width: 2,
+  height: 10,
+  paths: [
+    GlyphPath([[0, 0, 2, 0, 2, 2, 0, 2]]),
+    GlyphPath([[0, 4, 2, 4, 2, 6, 0, 6]]),
+    GlyphPath([[0, 8, 2, 8, 2, 10, 0, 10]]),
+  ],
+);
+
 /// 연필 — 메인 화면 인풋칸의 밑그림.
 ///
 /// 밑그림(edit.svg)의 칸을 좌표 그대로 옮겼다. 내보낸 path 가 자기 자신과

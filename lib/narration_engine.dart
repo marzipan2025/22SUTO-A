@@ -25,6 +25,12 @@ class SentenceItem {
   /// 설정을 바꿔도 이미 만들어 둔 것은 그대로 쓰므로, 지금 설정과 다를 수 있다.
   /// 파일 이름에서 읽어 오거나 만들 때 적어 둔다. 알 수 없으면 null.
   String? voice;
+
+  /// 손으로 '다시 만들기' 를 이른 문장이면, 그때 고른 설정.
+  /// 이 문장 하나에만 쓰고 만들고 나면 비운다 — 전역 설정은 건드리지 않는다.
+  String? forceVoice;
+  double? forceSpeed;
+  int? forceSteps;
 }
 
 /// 선행 합성(prefetch) 파이프라인.
@@ -443,6 +449,50 @@ class NarrationEngine extends ChangeNotifier {
 
   Future<void> skipPrevious() => seekToUnit(_currentIndex - 1);
 
+  /// 문장 하나를 손으로 고른 설정으로 다시 만든다.
+  ///
+  /// 전역 설정은 건드리지 않는다 — 이 문장 하나에만 쓴다.
+  ///
+  /// 그 문장의 **옛 음성은 지운다.** 파일 이름에 설정이 들어가므로 그냥
+  /// 두면 후보가 둘이 되는데, 다음에 이 글에 들어올 때 엔진은 '지금
+  /// 설정과 맞는 것' 을 먼저 고른다. 그러면 애써 다시 만든 것이 묻힌다.
+  /// 하나만 남겨 두어야 다시 만든 것이 그대로 유지된다.
+  ///
+  /// 만든 뒤에는 그 문장부터 다시 들려준다 — 다시 만들라고 이른 사람이
+  /// 가장 먼저 궁금한 것이 그 문장의 소리다.
+  Future<void> remake(
+    int index, {
+    required String voice,
+    required double speed,
+    required int steps,
+  }) async {
+    if (index < 0 || index >= _items.length) return;
+    final item = _items[index];
+    final dir = _sessionDir;
+
+    // 이 문장의 옛 음성을 지운다
+    if (dir != null && dir.existsSync()) {
+      final prefix = voiceFilePrefix(index, item.text);
+      for (final f in dir.listSync()) {
+        if (f is File && f.path.split('/').last.startsWith('${prefix}_')) {
+          try {
+            f.deleteSync();
+          } catch (_) {}
+        }
+      }
+    }
+
+    item.forceVoice = voice;
+    item.forceSpeed = speed;
+    item.forceSteps = steps;
+    item.filePath = null;
+    item.voice = null;
+    item.status = SentenceStatus.pending;
+
+    // 그 자리로 옮기면 대기열이 다시 짜이고, 만들어지는 대로 들린다
+    await seekToUnit(index);
+  }
+
   /// 지정한 문장부터 다시 읽는다. 그 뒤 문장들도 필요하면 새로 합성한다.
   Future<void> seekToUnit(int index) async {
     if (_items.isEmpty || _tts == null) return;
@@ -534,7 +584,12 @@ class NarrationEngine extends ChangeNotifier {
       // 매번 최신 설정을 읽는다 → 읽는 중에 바꿔도 곧바로 반영.
       // 이름에도 이때 읽은 값을 담는다 — 만드는 사이에 설정이 또 바뀌어도
       // 파일 이름과 실제 소리가 어긋나지 않는다.
-      final voice = _voice, lang = _lang, steps = _steps, speed = _speed;
+      // 손으로 다시 만들라고 이른 문장이면 그때 고른 설정을 쓴다.
+      final forced = _items[i];
+      final voice = forced.forceVoice ?? _voice;
+      final speed = forced.forceSpeed ?? _speed;
+      final steps = forced.forceSteps ?? _steps;
+      final lang = _lang;
       final signature = '$voice|$lang|${speed.toStringAsFixed(2)}|$steps';
 
       final item = _items[i];
@@ -573,6 +628,10 @@ class NarrationEngine extends ChangeNotifier {
           item.filePath = path;
           item.voice = voice;
           item.status = SentenceStatus.ready;
+          // 한 번 쓰고 비운다. 파일이 하나뿐이라 다음에도 이것이 뽑힌다.
+          item.forceVoice = null;
+          item.forceSpeed = null;
+          item.forceSteps = null;
         }
       } catch (e, st) {
         logger.e('문장 $i 합성 실패', error: e, stackTrace: st);

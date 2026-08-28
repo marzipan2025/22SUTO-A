@@ -118,6 +118,13 @@ class MainActivity : FlutterActivity() {
                     packageManager.getPackageInfo(packageName, 0).versionName
                 )
 
+                // 이 설치본을 가리키는 표. 다시 깔 때마다 값이 바뀐다.
+                // 꺼내 둔 음성 모델이 지금 앱의 것인지 가리는 데 쓴다.
+                "buildStamp" -> result.success(
+                    packageManager.getPackageInfo(packageName, 0)
+                        .lastUpdateTime.toString()
+                )
+
                 // 내려받은 APK 를 시스템 설치 화면에 넘긴다.
                 // 설치 자체는 시스템이 하고 사용자가 확인을 누른다 — 앱이 몰래 깔 수는 없다.
                 "install" -> {

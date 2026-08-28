@@ -294,15 +294,25 @@ class _TTSPageState extends State<TTSPage> with WidgetsBindingObserver {
     // 앱을 켰을 때의 기본 선택은 '맨 나중에 추가한 것'
     _selectedId = _sources.isNotEmpty ? _sources.last.id : null;
 
+    if (mounted) setState(() {});
+
     // 목록에 남은 글의 음성은 그대로 두고, 없어진 글의 것만 버린다.
     // 총량이 넘치면 오래전에 넣은 글부터 (목록 앞쪽이 오래된 것이다).
-    await NarrationEngine.pruneVoice(
-      oldestFirst: _sources.map((s) => s.id).toList(),
-      inUseSourceId: _selectedId,
-    );
+    //
+    // **화면을 세워 두고 기다리지 않는다.** 음성을 지우지 않고 쌓아 두므로
+    // 파일이 수천 개까지 늘고, 크기를 재는 데만 몇 초가 걸린다. 그동안 첫
+    // 화면이 멈춰 있었다. 급한 일이 아니니 뒤에서 하고, 끝나면 띠를 그린다.
+    unawaited(() async {
+      await NarrationEngine.pruneVoice(
+        oldestFirst: _sources.map((s) => s.id).toList(),
+        inUseSourceId: _selectedId,
+      );
+      if (mounted) await _refreshMade();
+    }());
+    // 모델을 읽는 동안에는 화면이 그려지지 않는다. 첫 그림이 나온 뒤에
+    // 시작해, 아이콘만 보이는 시간을 줄인다.
+    await WidgetsBinding.instance.endOfFrame;
 
-    if (mounted) setState(() {});
-    unawaited(_refreshMade());
     try {
       await _engine.loadModels();
       if (mounted) setState(() => _ready = true);
@@ -334,14 +344,10 @@ class _TTSPageState extends State<TTSPage> with WidgetsBindingObserver {
   /// 폴더를 훑는 일이라 화면을 그릴 때마다 할 수 없다. 글이 늘거나 줄 때,
   /// 설정이 바뀔 때, 읽기를 마치고 목록으로 돌아올 때만 다시 잰다.
   Future<void> _refreshMade() async {
-    final made = <String, List<bool>>{};
-    for (final s in _sources) {
-      made[s.id] = await NarrationEngine.madeFlags(
-        sourceId: s.id,
-        text: s.text,
-        langChoice: _settings.lang,
-      );
-    }
+    final made = await NarrationEngine.madeFlagsBatch(
+      sources: [for (final s in _sources) [s.id, s.text]],
+      langChoice: _settings.lang,
+    );
     if (mounted) setState(() => _made = made);
   }
 
@@ -368,6 +374,7 @@ class _TTSPageState extends State<TTSPage> with WidgetsBindingObserver {
     final bytes = _voiceBytes;
     Future<void> clear() async {
       await NarrationEngine.clearVoice();
+      _engine.resumeAfterCleanup();
       final b = await NarrationEngine.voiceBytes();
       _voiceBytes = b;
       refresh(() {});

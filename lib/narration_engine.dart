@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'dart:isolate';
 
 import 'package:flutter/foundation.dart';
 import 'package:just_audio/just_audio.dart';
@@ -32,16 +33,21 @@ class SentenceItem {
 /// 그래서 사용자가 어느 문장으로 건너뛰어도 그 지점부터 곧바로 따라붙고,
 /// 대기열 크기가 일정하므로 글이 아무리 길어도 메모리 사용량은 변하지 않는다.
 class NarrationEngine extends ChangeNotifier {
-  NarrationEngine({this.maxReadyAhead = 60, this.warmupUnits = 1});
-
-  /// 아직 재생하지 않은 준비분을 최대 몇 개까지 쌓아둘지.
-  ///
-  /// 여유가 있으면 계속 앞서 만들어 두되, 저장공간이 무한정 늘지 않도록
-  /// 이 개수에 이르면 재생이 따라올 때까지 잠시 쉰다.
-  final int maxReadyAhead;
+  NarrationEngine({this.warmupUnits = 1});
 
   /// 재생을 시작하기 전에 먼저 만들어 둘 문장 수 (1 = 첫 문장이 준비되면 바로 시작)
   final int warmupUnits;
+
+  /// 재생기에 미리 담아 둘 문장 수.
+  ///
+  /// 만드는 것은 끝까지 계속하되, **재생기에 담는 것은 앞쪽 몇 개까지만**
+  /// 한다. 담은 만큼 재생기가 안에 자리를 들고 있어서, 긴 글을 통째로
+  /// 담으면 그만큼 무거워진다. 재생이 나아가면 그때그때 더 담는다.
+  static const maxQueueAhead = 30;
+
+  /// 재생 중이라면 앞쪽에 적어도 이만큼은 준비돼 있어야 한다.
+  /// 모자란데 만드는 중도 아니면 일꾼이 멎은 것으로 보고 다시 세운다.
+  static const minReadyAhead = 5;
 
   final AudioPlayer player = AudioPlayer();
 
@@ -88,6 +94,11 @@ class NarrationEngine extends ChangeNotifier {
   /// 보면 안 된다 — 다음 문장을 만드는 동안에도 잠깐씩 멎기 때문이다.
   bool _userPaused = false;
   bool _pumping = false;
+
+  /// 저장공간이 [voiceLimitBytes] 에 닿아 더 만들지 않는 중.
+  /// 앞쪽 빈 자리를 끝까지 채우기로 했으니, 멈추는 자리는 여기 하나뿐이다.
+  bool _storageFull = false;
+  int _madeSinceCheck = 0;
   bool _pumpAgain = false; // 미는 동안 또 밀어 달라는 요청이 왔다
 
   /// 재생목록 세대.
@@ -145,11 +156,46 @@ class NarrationEngine extends ChangeNotifier {
   void Function(SentenceItem item)? onSentenceChanged;
 
   // ---------------------------------------------------------------- 초기화
+  /// 앞쪽이 비었는지 이따금 들여다보는 눈.
+  Timer? _watchdog;
+
+  /// 재생 중인데 앞쪽 [minReadyAhead] 개가 채워져 있지 않고, 만드는 중도
+  /// 아니라면 — 일꾼이 어디선가 멎은 것이다. 곧바로 다시 세운다.
+  ///
+  /// 일꾼은 한 번 빠져나오면 스스로 돌아오지 않는다. 그동안 재생은 이어져
+  /// 준비된 데까지 읽다가 조용히 멈춰 버린다. 그 자리를 여기서 막는다.
+  void _kickIfIdle() {
+    if (_items.isEmpty || _tts == null || _storageFull) return;
+    if (!player.playing) return;
+    if (_synthesizingIndex >= 0) return; // 이미 만드는 중이면 그대로 둔다
+
+    final from = _currentIndex < 0 ? 0 : _currentIndex;
+    final end = (from + 1 + minReadyAhead).clamp(0, _items.length);
+    var missing = false;
+    for (var i = from; i < end; i++) {
+      if (_items[i].status == SentenceStatus.pending) {
+        missing = true;
+        break;
+      }
+    }
+    if (!missing) return;
+
+    if (!_running) {
+      logger.w('앞쪽이 비어 일꾼을 다시 세운다 (문장 ${from + 1})');
+      _running = true;
+      unawaited(_worker(_generation));
+    }
+    unawaited(_pump(_generation));
+  }
+
   Future<void> loadModels() async {
     _setStatus('음성 엔진 준비 중...');
     _tts = await loadTextToSpeech('assets/onnx', useGpu: false);
     await _style('M1');
     _setStatus('준비 완료');
+
+    _watchdog?.cancel();
+    _watchdog = Timer.periodic(const Duration(seconds: 2), (_) => _kickIfIdle());
 
     player.currentIndexStream.listen(_onPlayerIndex);
     player.processingStateStream.listen((s) {
@@ -245,6 +291,8 @@ class NarrationEngine extends ChangeNotifier {
     // 뒤에도 그대로 되찾는다 — 메모리에 표를 들고 있을 필요가 없다.
     _attachMade(startAt);
 
+    _storageFull = false;
+    _madeSinceCheck = 0;
     _playlistGen++;
     _playlistEnd = startAt;
     _playlistMap.clear();
@@ -435,10 +483,12 @@ class NarrationEngine extends ChangeNotifier {
   // ------------------------------------------------------------------ 워커
   /// 지금 재생 위치를 기준으로, 아직 안 만든 문장 중 가장 가까운 것.
   ///
-  /// 여유가 있는 한 끝까지 계속 앞서 만든다. 다만 아직 듣지 않은 준비분이
-  /// [maxReadyAhead]를 넘으면 저장공간 보호를 위해 잠시 쉰다.
+  /// 앞쪽에 빈 자리가 있으면 아무리 멀어도 끝까지 계속 채운다. 준비분이
+  /// 몇 개든 쉬지 않는다 — 되찾은 음성이 앞쪽에 많다는 이유로 손을 놓으면,
+  /// 그 사이사이의 빈 자리가 영영 채워지지 않는다.
+  /// 저장공간은 [_storageFull] 로 따로 막는다.
   int? _pickNext() {
-    if (readyCount >= maxReadyAhead) return null;
+    if (_storageFull) return null;
     final start = _currentIndex < 0 ? 0 : _currentIndex;
     for (var i = start; i < _items.length; i++) {
       if (_items[i].status == SentenceStatus.pending) return i;
@@ -510,7 +560,23 @@ class NarrationEngine extends ChangeNotifier {
 
       await _pump(gen);
       await _checkWarmup(gen);
+      await _checkStorage(gen);
     }
+  }
+
+  /// 스물다섯 문장마다 한 번씩 총량을 재고, 상한에 닿으면 손을 놓는다.
+  /// 매번 재면 폴더를 훑는 값이 아까워 띄엄띄엄 잰다.
+  Future<void> _checkStorage(int gen) async {
+    if (++_madeSinceCheck < 25) return;
+    _madeSinceCheck = 0;
+    try {
+      final bytes = await voiceBytes();
+      if (gen != _generation) return;
+      if (bytes >= voiceLimitBytes) {
+        _storageFull = true;
+        _setStatus('저장공간이 가득 찼어요. 설정에서 정리해 주세요.');
+      }
+    } catch (_) {}
   }
 
   /// 준비된 문장이 목표치에 이르면 재생을 시작한다.
@@ -574,7 +640,8 @@ class NarrationEngine extends ChangeNotifier {
         final pg = _playlistGen;
         while (gen == _generation &&
             pg == _playlistGen &&
-            _playlistEnd < _items.length) {
+            _playlistEnd < _items.length &&
+            _playlistEnd - _currentIndex <= maxQueueAhead) {
           final it = _items[_playlistEnd];
           if (it.status == SentenceStatus.failed) {
             _playlistEnd++; // 실패한 문장은 건너뛴다
@@ -659,6 +726,8 @@ class NarrationEngine extends ChangeNotifier {
     }
     _currentIndex = index;
     _stalled = false;
+    // 한 걸음 나아갔으니 그만큼 더 담을 자리가 생겼다
+    unawaited(_pump(_generation));
     onSentenceChanged?.call(_items[index]);
     _setStatus('재생 중 (${index + 1}/${_items.length})');
   }
@@ -723,16 +792,26 @@ class NarrationEngine extends ChangeNotifier {
   String? _legacyVoiceOf(String name) {
     final parts = name.replaceAll('.wav', '').split('_');
     if (parts.length != 3) return null;
-    final want = parts[2];
-    for (final v in voices) {
-      for (var st = 2; st <= 12; st++) {
-        final sig =
-            signatureOf(voice: v, lang: _lang, speed: _speed, steps: st);
-        if (tag(sig) == want) return v;
+
+    // 표는 백열 줄뿐이라 한 번 만들어 두고 다시 쓴다. 파일마다 새로
+    // 만들면 문장 천 개짜리 글에서 십만 번을 헛돈다.
+    final key = '$_lang|${_speed.toStringAsFixed(2)}';
+    if (_legacyKey != key) {
+      final t = <String, String>{};
+      for (final v in voices) {
+        for (var st = 2; st <= 12; st++) {
+          t[tag(signatureOf(
+              voice: v, lang: _lang, speed: _speed, steps: st))] = v;
+        }
       }
+      _legacyTable = t;
+      _legacyKey = key;
     }
-    return null;
+    return _legacyTable[parts[2]];
   }
+
+  Map<String, String> _legacyTable = const {};
+  String _legacyKey = '';
 
   /// 설정을 뺀 앞부분. 이것만 같으면 같은 문장의 음성이다.
   @visibleForTesting
@@ -863,7 +942,27 @@ class NarrationEngine extends ChangeNotifier {
     required String sourceId,
     required String text,
     required String langChoice,
+  }) async =>
+      _flagsFor(await _voiceRootPath(), sourceId, text, langChoice);
+
+  /// 여러 글의 띠를 한꺼번에 잰다.
+  ///
+  /// 폴더를 훑고 글을 문장으로 나누는 일이라, 글이 길고 파일이 많으면
+  /// 그 사이 화면이 멎는다. 딴 일꾼에게 통째로 맡기고 결과만 받는다.
+  static Future<Map<String, List<bool>>> madeFlagsBatch({
+    required List<List<String>> sources, // [글 번호, 글]
+    required String langChoice,
   }) async {
+    if (sources.isEmpty) return const {};
+    final root = await _voiceRootPath();
+    return Isolate.run(() => {
+          for (final s in sources)
+            s[0]: _flagsFor(root, s[0], s[1], langChoice),
+        });
+  }
+
+  static List<bool> _flagsFor(
+      String root, String sourceId, String text, String langChoice) {
     final cleaned = cleanText(text).trim();
     if (cleaned.isEmpty) return const [];
     final lang = langChoice == 'auto' || langChoice == 'na'
@@ -872,7 +971,7 @@ class NarrationEngine extends ChangeNotifier {
     final units = splitUnits(cleaned, lang);
     if (units.isEmpty) return const [];
 
-    final dir = Directory('${await _voiceRootPath()}/$sourceId');
+    final dir = Directory('$root/$sourceId');
     if (!dir.existsSync()) return List.filled(units.length, false);
 
     final byPrefix = _byPrefix(dir);
@@ -896,6 +995,14 @@ class NarrationEngine extends ChangeNotifier {
   static Future<void> clearVoice() async {
     final root = Directory(await _voiceRootPath());
     if (root.existsSync()) root.deleteSync(recursive: true);
+  }
+
+  /// 저장공간을 비웠으니 다시 만들어도 된다고 알린다.
+  void resumeAfterCleanup() {
+    if (!_storageFull) return;
+    _storageFull = false;
+    _madeSinceCheck = 0;
+    notifyListeners();
   }
 
   static int _dirBytes(Directory dir) {
@@ -931,6 +1038,7 @@ class NarrationEngine extends ChangeNotifier {
   @override
   void dispose() {
     _generation++;
+    _watchdog?.cancel();
     player.dispose();
     // 음성 파일은 지우지 않는다. 앱을 다시 켤 때 cleanupTemp()가
     // 각 글의 마지막 재생 위치 파일만 남기고 정리한다.

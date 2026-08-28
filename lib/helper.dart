@@ -7,6 +7,8 @@ import 'package:flutter_onnxruntime/flutter_onnxruntime.dart';
 import 'package:logger/logger.dart';
 import 'package:path_provider/path_provider.dart';
 
+import 'update_check.dart' show buildStamp;
+
 final logger = Logger(
   printer: PrettyPrinter(methodCount: 0, errorMethodCount: 5, lineLength: 80),
 );
@@ -562,7 +564,7 @@ Future<TextToSpeech> loadTextToSpeech(String onnxDir,
   logger.i('Loading TTS models from $onnxDir');
 
   final cfgs = await _loadCfgs(onnxDir);
-  final sessions = await _loadOnnxAll(onnxDir);
+  final sessions = await _loadOnnxAll(onnxDir, await buildStamp());
   final textProcessor =
       await UnicodeProcessor.load('$onnxDir/unicode_indexer.json');
 
@@ -626,13 +628,31 @@ Future<Map<String, dynamic>> _loadCfgs(String onnxDir) async {
   return json as Map<String, dynamic>;
 }
 
-Future<String> copyModelToFile(String path) async {
-  final byteData = await rootBundle.load(path);
+/// 앱 속에 든 모델을 파일로 꺼낸다. ONNX 는 파일 경로만 받기 때문이다.
+///
+/// **이미 꺼내 둔 것이 지금 앱의 것이면 그대로 쓴다.** 네 모델을 합치면
+/// 400MB 가 넘어, 켤 때마다 다시 꺼내는 데만 5초 넘게 걸렸다. 그동안 첫
+/// 화면이 뜨지 못하고 아이콘만 보였다.
+/// [stamp] 는 설치본마다 달라지므로, 앱을 새로 깔면 저절로 다시 꺼낸다.
+Future<String> copyModelToFile(String path, String stamp) async {
   final tempDir = await getApplicationCacheDirectory();
   final modelPath = '${tempDir.path}/${path.split("/").last}';
-
   final file = File(modelPath);
+  final mark = File('$modelPath.stamp');
+
+  if (stamp.isNotEmpty && file.existsSync() && mark.existsSync()) {
+    try {
+      if (mark.readAsStringSync() == stamp) return modelPath;
+    } catch (_) {}
+  }
+
+  final byteData = await rootBundle.load(path);
   await file.writeAsBytes(byteData.buffer.asUint8List());
+  if (stamp.isNotEmpty) {
+    try {
+      await mark.writeAsString(stamp);
+    } catch (_) {}
+  }
   return modelPath;
 }
 
@@ -664,7 +684,7 @@ Future<OrtSessionOptions> _bestSessionOptions(OnnxRuntime ort) async {
   );
 }
 
-Future<Map<String, OrtSession>> _loadOnnxAll(String dir) async {
+Future<Map<String, OrtSession>> _loadOnnxAll(String dir, String stamp) async {
   final ort = OnnxRuntime();
   final models = [
     'duration_predictor',
@@ -678,7 +698,7 @@ Future<Map<String, OrtSession>> _loadOnnxAll(String dir) async {
   final options = await _bestSessionOptions(ort);
 
   final sessions = await Future.wait(models.map((name) async {
-    final path = await copyModelToFile('$dir/$name.onnx');
+    final path = await copyModelToFile('$dir/$name.onnx', stamp);
     logger.d('Loading $name.onnx');
     try {
       return await ort.createSessionFromAsset(path, options: options);

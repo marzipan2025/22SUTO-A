@@ -63,6 +63,16 @@ Future<String> currentVersion() async {
   return v ?? '0.0.0';
 }
 
+/// 이 설치본을 가리키는 표 — 다시 깔 때마다 달라진다.
+/// 앱과 함께 온 파일을 꺼내 두었을 때, 그것이 지금 앱의 것인지 가리는 데 쓴다.
+Future<String> buildStamp() async {
+  try {
+    final v = await _updateChannel.invokeMethod<String>('buildStamp');
+    if (v != null && v.isNotEmpty) return v;
+  } catch (_) {}
+  return '';
+}
+
 /// 점으로 끊어 숫자로 견준다. '0.1.10' 이 '0.1.9' 보다 새것이다.
 /// 자리가 모자라면 0 으로 친다.
 bool isNewer(String candidate, String current) {

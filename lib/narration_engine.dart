@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter/foundation.dart';
@@ -65,8 +66,6 @@ class NarrationEngine extends ChangeNotifier {
   String? get sourceId => _sourceId;
 
   /// 글별로 보관해 둔 대기열 — sourceId → (문장 번호 → 음성 파일 경로).
-  /// A를 듣다 B로 갔다가 A로 돌아와도 다시 합성하지 않도록 들고 있는다.
-  final Map<String, Map<int, String>> _parkedFiles = {};
 
   int _generation = 0;
   int _currentIndex = -1;
@@ -148,13 +147,12 @@ class NarrationEngine extends ChangeNotifier {
   /// [sourceId]의 글을 읽기 시작한다.
   ///
   /// 이미 다른 글을 읽고 있었다면 그 글의 대기열을 보관해 두고 넘어간다.
-  /// 예전에 읽던 글이면 [resumeIndex]부터 이어서 읽고,
-  /// 보관해 둔 음성 파일이 남아 있으면 다시 만들지 않고 그대로 쓴다.
+  /// 예전에 읽던 글이면 [resumeIndex]부터 이어서 읽고, 폴더에 이미 만들어 둔
+  /// 음성이 있으면 다시 만들지 않고 그대로 쓴다 (이름으로 알아본다).
   Future<void> start(
     String text, {
     required String sourceId,
     int resumeIndex = 0,
-    String? resumeFilePath,
   }) async {
     if (_tts == null) return;
 
@@ -197,23 +195,9 @@ class NarrationEngine extends ChangeNotifier {
 
     _sessionDir = await _sessionDirFor(sourceId);
 
-    // 보관해 둔 대기열 되살리기 (메모리에 남아 있던 것)
-    final parked = _parkedFiles[sourceId];
-    if (parked != null) {
-      parked.forEach((i, path) {
-        if (i < 0 || i >= _items.length) return;
-        if (!File(path).existsSync()) return;
-        _items[i].filePath = path;
-        if (i >= startAt) _items[i].status = SentenceStatus.ready;
-      });
-    }
-    // 앱을 다시 켠 뒤라면 재생 위치의 파일 하나만 남아 있다
-    if (resumeFilePath != null &&
-        _items[startAt].filePath == null &&
-        File(resumeFilePath).existsSync()) {
-      _items[startAt].filePath = resumeFilePath;
-      _items[startAt].status = SentenceStatus.ready;
-    }
+    // 이미 만들어 둔 음성을 되찾는다. 이름만 보고 알아내므로 앱을 껐다 켠
+    // 뒤에도 그대로 되찾는다 — 메모리에 표를 들고 있을 필요가 없다.
+    _attachMade(startAt);
 
     _playlistEnd = startAt;
     _playlistMap.clear();
@@ -225,6 +209,32 @@ class NarrationEngine extends ChangeNotifier {
 
     unawaited(_worker(gen));
     unawaited(_pump(gen));
+  }
+
+  /// 폴더에 이미 있는 음성을 문장에 붙인다.
+  ///
+  /// 지금 설정으로 만든 것만 붙인다. 다른 설정으로 만든 것은 소리가 다르므로
+  /// 쓰지 않지만 **지우지도 않는다** — 설정을 되돌리면 그때 다시 쓰인다.
+  void _attachMade(int startAt) {
+    final dir = _sessionDir;
+    if (dir == null || !dir.existsSync()) return;
+
+    final have = <String>{};
+    for (final f in dir.listSync()) {
+      if (f is File) have.add(f.path.split('/').last);
+    }
+    if (have.isEmpty) return;
+
+    final sig = _signature;
+    var found = 0;
+    for (var i = 0; i < _items.length; i++) {
+      final name = voiceFileName(i, _items[i].text, sig);
+      if (!have.contains(name)) continue;
+      _items[i].filePath = '${dir.path}/$name';
+      if (i >= startAt) _items[i].status = SentenceStatus.ready;
+      found++;
+    }
+    if (found > 0) logger.i('만들어 둔 음성 $found개를 되찾았다');
   }
 
   /// 재생을 멈춘다. **만들어둔 음성은 그대로 둔다.**
@@ -244,27 +254,11 @@ class NarrationEngine extends ChangeNotifier {
       await player.clearAudioSources();
     } catch (_) {}
 
-    final id = _sourceId;
-    if (id != null && _items.isNotEmpty) {
-      _parkedFiles[id] = _keptFiles();
-    }
     _setStatus('정지했어요.');
-  }
-
-  /// 지금 남아 있는 음성 파일들의 (문장 번호 → 경로).
-  /// 다시 이 글로 들어왔을 때 어디까지 만들어 뒀는지 알려 주는 표다.
-  Map<int, String> _keptFiles() {
-    final keep = <int, String>{};
-    for (var i = 0; i < _items.length; i++) {
-      final p = _items[i].filePath;
-      if (p != null && File(p).existsSync()) keep[i] = p;
-    }
-    return keep;
   }
 
   /// 글을 삭제할 때 — 보관 중인 대기열과 음성 파일 폴더를 통째로 없앤다
   Future<void> dropSource(String sourceId) async {
-    _parkedFiles.remove(sourceId);
     if (_sourceId == sourceId) {
       _sourceId = null;
       _items = [];
@@ -378,8 +372,11 @@ class NarrationEngine extends ChangeNotifier {
         continue;
       }
 
-      // 매번 최신 설정을 읽는다 → 읽는 중에 바꿔도 곧바로 반영
+      // 매번 최신 설정을 읽는다 → 읽는 중에 바꿔도 곧바로 반영.
+      // 이름에도 이때 읽은 값을 담는다 — 만드는 사이에 설정이 또 바뀌어도
+      // 파일 이름과 실제 소리가 어긋나지 않는다.
       final voice = _voice, lang = _lang, steps = _steps, speed = _speed;
+      final signature = '$voice|$lang|${speed.toStringAsFixed(2)}|$steps';
 
       final item = _items[i];
       item.status = SentenceStatus.synthesizing;
@@ -400,7 +397,8 @@ class NarrationEngine extends ChangeNotifier {
         final t1 = DateTime.now();
 
         final wav = (result['wav'] as List).cast<double>();
-        final path = '${dir.path}/s${i}_${DateTime.now().millisecondsSinceEpoch}.wav';
+        final path =
+            '${dir.path}/${voiceFileName(i, item.text, signature)}';
         writeWavFile(path, wav, _tts!.sampleRate);
         final t2 = DateTime.now();
 
@@ -558,6 +556,39 @@ class NarrationEngine extends ChangeNotifier {
     _setStatus(failed == 0
         ? '모두 읽었어요 (${_items.length}문장)'
         : '끝났어요 (${_items.length}문장 중 $failed개 실패)');
+  }
+
+  /// 음성 파일 하나의 이름.
+  ///
+  /// 이름만 보고 "몇 번째 문장을, 어떤 글로, 어떤 설정으로 만든 것인지" 를
+  /// 알 수 있어야 한다. 그래야 앱을 껐다 켠 뒤에도 디스크만 훑어서 되찾는다.
+  /// 전에는 만든 시각을 붙였고 짝은 메모리 안의 표에만 있었다 — 앱을 끄면
+  /// 표가 사라져 전부 다시 만들었다.
+  ///
+  ///   s0007_a1b2c3d4_e5f6a7b8.wav
+  ///        └ 문장 번호  └ 글자   └ 설정
+  ///
+  /// 설정이 이름에 들어가므로, 목소리나 속도를 바꾸면 다른 이름이 된다.
+  /// 전에 만든 것은 지우지 않고 그대로 두므로 되돌리면 다시 곧바로 들린다.
+  @visibleForTesting
+  static String voiceFileName(int index, String text, String signature) =>
+      's${index.toString().padLeft(4, '0')}_${tag(text)}_${tag(signature)}.wav';
+
+  /// 지금 설정을 한 줄로. 소리에 영향을 주는 것만 넣는다.
+  String get _signature =>
+      '$_voice|$_lang|${_speed.toStringAsFixed(2)}|$_steps';
+
+  /// 짧고 값이 늘 같은 표.
+  ///
+  /// String.hashCode 는 쓰지 않는다 — 한 번 실행하는 동안에는 같지만 다시
+  /// 켜면 달라질 수 있어서, 이름에 박아 두면 되찾지 못한다. (FNV-1a)
+  @visibleForTesting
+  static String tag(String s) {
+    var h = 0x811c9dc5;
+    for (final b in utf8.encode(s)) {
+      h = ((h ^ b) * 0x01000193) & 0xFFFFFFFF;
+    }
+    return h.toRadixString(16).padLeft(8, '0');
   }
 
   /// 글마다 고정된 폴더를 쓴다. 그래야 다른 글에 갔다 와도 파일이 그대로 있다.

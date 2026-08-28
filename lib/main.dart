@@ -817,7 +817,6 @@ class _TTSPageState extends State<TTSPage> with WidgetsBindingObserver {
         text,
         sourceId: source!.id,
         resumeIndex: source.lastIndex,
-        resumeFilePath: source.lastFilePath,
       );
     }
   }

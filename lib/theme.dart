@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart' show listEquals;
 import 'package:flutter/material.dart';
 import 'package:suto_a/hangul.dart';
 import 'package:suto_a/pixel.dart';
@@ -348,4 +349,89 @@ class PixelGauge extends StatelessWidget {
       ),
     );
   }
+}
+
+/// 문장마다 음성을 만들어 뒀는지 늘어놓은 띠.
+///
+/// 작은 네모 하나가 문장 하나다. 채워진 것은 만들어 둔 것, 빈 것은 아직이다.
+/// 어디까지 만들었는지, 중간에 빠진 데가 있는지가 한눈에 보인다.
+///
+/// 문장이 많아 한 줄에 다 못 놓으면 여러 문장을 한 칸에 묶는다. 묶은 칸은
+/// **그 안이 모두 채워졌을 때만** 켠다 — 덜 된 것을 다 된 것처럼 보이게
+/// 하느니 덜 보이는 편이 낫다.
+class MadeStrip extends StatelessWidget {
+  const MadeStrip({
+    super.key,
+    required this.flags,
+    required this.ink,
+    this.cell = 3,
+    this.gap = 0.5,
+  });
+
+  /// 문장마다 음성이 있는지
+  final List<bool> flags;
+
+  /// 카드 위 글자색. 켜진 칸은 이 색, 꺼진 칸은 같은 색을 아주 옅게.
+  final Color ink;
+
+  final double cell;
+  final double gap;
+
+  @override
+  Widget build(BuildContext context) {
+    if (flags.isEmpty) return const SizedBox.shrink();
+    return SizedBox(
+      height: cell,
+      child: LayoutBuilder(builder: (context, c) {
+        // 한 줄에 몇 칸이 들어가나
+        final fit = ((c.maxWidth + gap) / (cell + gap)).floor();
+        if (fit < 1) return const SizedBox.shrink();
+        return CustomPaint(
+          size: Size(c.maxWidth, cell),
+          painter: _StripPainter(flags, fit, cell, gap, ink),
+        );
+      }),
+    );
+  }
+}
+
+class _StripPainter extends CustomPainter {
+  _StripPainter(this.flags, this.fit, this.cell, this.gap, this.ink);
+
+  final List<bool> flags;
+  final int fit;
+  final double cell;
+  final double gap;
+  final Color ink;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final n = flags.length < fit ? flags.length : fit;
+    final on = Paint()..color = ink;
+    final off = Paint()..color = ink.withValues(alpha: 0.18);
+
+    for (var k = 0; k < n; k++) {
+      // 이 칸이 맡은 문장 구간
+      final lo = k * flags.length ~/ n;
+      final hi = (k + 1) * flags.length ~/ n;
+      var all = true;
+      for (var i = lo; i < (hi > lo ? hi : lo + 1); i++) {
+        if (i >= flags.length || !flags[i]) {
+          all = false;
+          break;
+        }
+      }
+      canvas.drawRect(
+        Rect.fromLTWH(k * (cell + gap), 0, cell, cell),
+        all ? on : off,
+      );
+    }
+  }
+
+  @override
+  bool shouldRepaint(_StripPainter old) =>
+      old.fit != fit ||
+      old.ink != ink ||
+      old.cell != cell ||
+      !listEquals(old.flags, flags);
 }

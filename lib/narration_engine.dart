@@ -574,9 +574,17 @@ class NarrationEngine extends ChangeNotifier {
   static String voiceFileName(int index, String text, String signature) =>
       's${index.toString().padLeft(4, '0')}_${tag(text)}_${tag(signature)}.wav';
 
-  /// 지금 설정을 한 줄로. 소리에 영향을 주는 것만 넣는다.
-  String get _signature =>
-      '$_voice|$_lang|${_speed.toStringAsFixed(2)}|$_steps';
+  /// 설정을 한 줄로. 소리에 영향을 주는 것만 넣는다.
+  static String signatureOf({
+    required String voice,
+    required String lang,
+    required double speed,
+    required int steps,
+  }) =>
+      '$voice|$lang|${speed.toStringAsFixed(2)}|$steps';
+
+  String get _signature => signatureOf(
+      voice: _voice, lang: _lang, speed: _speed, steps: _steps);
 
   /// 짧고 값이 늘 같은 표.
   ///
@@ -653,6 +661,43 @@ class NarrationEngine extends ChangeNotifier {
     } catch (e, st) {
       logger.e('음성 폴더 정리 실패', error: e, stackTrace: st);
     }
+  }
+
+  /// 그 글의 문장마다 지금 설정으로 만들어 둔 음성이 있는지.
+  ///
+  /// 읽고 있지 않은 글도 물어볼 수 있다 — 폴더에 있는 이름만 보고 알아낸다.
+  /// 문장 나누기는 엔진이 읽을 때와 똑같은 방법이라 번호가 어긋나지 않는다.
+  static Future<List<bool>> madeFlags({
+    required String sourceId,
+    required String text,
+    required String voice,
+    required String langChoice,
+    required double speed,
+    required int steps,
+  }) async {
+    final cleaned = cleanText(text).trim();
+    if (cleaned.isEmpty) return const [];
+    final lang = langChoice == 'auto' || langChoice == 'na'
+        ? detectLang(cleaned)
+        : langChoice;
+    final units = splitUnits(cleaned, lang);
+    if (units.isEmpty) return const [];
+
+    final dir = Directory('${await _voiceRootPath()}/$sourceId');
+    if (!dir.existsSync()) return List.filled(units.length, false);
+
+    final have = <String>{};
+    for (final f in dir.listSync()) {
+      if (f is File) have.add(f.path.split('/').last);
+    }
+    if (have.isEmpty) return List.filled(units.length, false);
+
+    final sig = signatureOf(
+        voice: voice, lang: lang, speed: speed, steps: steps);
+    return [
+      for (var i = 0; i < units.length; i++)
+        have.contains(voiceFileName(i, units[i], sig)),
+    ];
   }
 
   /// 만들어둔 음성이 지금 몇 바이트인지

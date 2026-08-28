@@ -160,6 +160,10 @@ class _TTSPageState extends State<TTSPage> with WidgetsBindingObserver {
   /// 만들어둔 음성이 차지하는 크기 (설정에서 보여준다)
   int? _voiceBytes;
 
+  /// 글마다 문장별로 음성을 만들어 뒀는지. 목록 카드 아래 띠에 쓴다.
+  /// 폴더를 훑어야 알 수 있으므로 그때그때 재지 않고 모아 두고 쓴다.
+  Map<String, List<bool>> _made = {};
+
   static const _voiceNames = {
     'M1': '남성 1', 'M2': '남성 2', 'M3': '남성 3', 'M4': '남성 4', 'M5': '남성 5',
     'F1': '여성 1', 'F2': '여성 2', 'F3': '여성 3', 'F4': '여성 4', 'F5': '여성 5',
@@ -230,6 +234,7 @@ class _TTSPageState extends State<TTSPage> with WidgetsBindingObserver {
     );
 
     if (mounted) setState(() {});
+    unawaited(_refreshMade());
     try {
       await _engine.loadModels();
       if (mounted) setState(() => _ready = true);
@@ -237,6 +242,25 @@ class _TTSPageState extends State<TTSPage> with WidgetsBindingObserver {
       logger.e('모델 로드 실패', error: e, stackTrace: st);
       if (mounted) setState(() {});
     }
+  }
+
+  /// 목록 카드 아래 띠를 다시 잰다.
+  ///
+  /// 폴더를 훑는 일이라 화면을 그릴 때마다 할 수 없다. 글이 늘거나 줄 때,
+  /// 설정이 바뀔 때, 읽기를 마치고 목록으로 돌아올 때만 다시 잰다.
+  Future<void> _refreshMade() async {
+    final made = <String, List<bool>>{};
+    for (final s in _sources) {
+      made[s.id] = await NarrationEngine.madeFlags(
+        sourceId: s.id,
+        text: s.text,
+        voice: _settings.voice,
+        langChoice: _settings.lang,
+        speed: _settings.speed,
+        steps: _settings.steps,
+      );
+    }
+    if (mounted) setState(() => _made = made);
   }
 
   /// 켤 때 조용히 한 번 확인한다.
@@ -493,6 +517,8 @@ class _TTSPageState extends State<TTSPage> with WidgetsBindingObserver {
     _saveTimer?.cancel();
     _saveTimer = Timer(const Duration(milliseconds: 500), () {
       saveSettings(_settings);
+      // 설정이 바뀌면 쓸 수 있는 음성도 달라진다 — 띠를 다시 잰다
+      unawaited(_refreshMade());
     });
   }
 
@@ -651,6 +677,7 @@ class _TTSPageState extends State<TTSPage> with WidgetsBindingObserver {
       _selectedId = item.id;
     });
     saveSources(_sources);
+    unawaited(_refreshMade());
   }
 
   Future<void> _pasteFromClipboard() async {
@@ -705,6 +732,7 @@ class _TTSPageState extends State<TTSPage> with WidgetsBindingObserver {
       }
     });
     saveSources(_sources);
+    unawaited(_refreshMade());
   }
 
   // ---- 문서 불러오기 (txt·docx·html 등) ----
@@ -831,6 +859,7 @@ class _TTSPageState extends State<TTSPage> with WidgetsBindingObserver {
     _persistProgress(); // 보관 후 남은 파일 경로로 갱신
     await _playback.invokeMethod('stop').catchError((_) => null);
     if (mounted) setState(() => _showList = false);
+    unawaited(_refreshMade());
   }
 
   /// 뒤로가기는 입력 화면으로 돌아가기만 할 뿐, 재생 중인 소리는 멈추지 않는다.
@@ -839,6 +868,7 @@ class _TTSPageState extends State<TTSPage> with WidgetsBindingObserver {
     if (mounted) setState(() {
       _showList = false;
     });
+    unawaited(_refreshMade());
   }
 
   Future<void> _togglePause() async {
@@ -1251,15 +1281,24 @@ class _TTSPageState extends State<TTSPage> with WidgetsBindingObserver {
               ),
               const SizedBox(width: _iconGap),
               Expanded(
-                child: Text(
-                  byWord(s.label),
-                  maxLines: 2, // 붙여넣기는 앞 두 줄, 파일은 파일명
-                  overflow: TextOverflow.ellipsis,
-                  style: TextStyle(
-                    fontSize: 14.5,
-                    height: 1.45,
-                    color: skin.ink,
-                  ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      byWord(s.label),
+                      maxLines: 2, // 붙여넣기는 앞 두 줄, 파일은 파일명
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        fontSize: 14.5,
+                        height: 1.45,
+                        color: skin.ink,
+                      ),
+                    ),
+                    if (_made[s.id]?.isNotEmpty ?? false) ...[
+                      const SizedBox(height: 8),
+                      MadeStrip(flags: _made[s.id]!, ink: skin.ink),
+                    ],
+                  ],
                 ),
               ),
               // 삭제 (확인 팝업 후 완전 삭제).

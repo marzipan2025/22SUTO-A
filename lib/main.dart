@@ -231,10 +231,27 @@ class _TTSPageState extends State<TTSPage> with WidgetsBindingObserver {
     return name == null ? null : 'assets/char/$name.png';
   }
 
+  /// 목소리마다 이름 하나. 얼굴 아래에 표시어(Panchang)로 적히므로
+  /// 넉 자 안팎의 짧은 이름으로 골랐다 — 길면 줄이 흔들린다.
   static const _voiceNames = {
-    'M1': '남성 1', 'M2': '남성 2', 'M3': '남성 3', 'M4': '남성 4', 'M5': '남성 5',
-    'F1': '여성 1', 'F2': '여성 2', 'F3': '여성 3', 'F4': '여성 4', 'F5': '여성 5',
+    'M1': 'LEO', 'M2': 'MAX', 'M3': 'NOAH', 'M4': 'ELI', 'M5': 'OWEN',
+    'F1': 'MIA', 'F2': 'ZOE', 'F3': 'LILY', 'F4': 'EVA', 'F5': 'RUBY',
   };
+
+  /// 목소리 고르개가 쓰는 값들.
+  ///
+  /// 얼굴은 그림마다 세로/가로 비가 달라(0.95~1.47) 폭으로 맞추면 키가
+  /// 들쭉날쭉해진다. 고르개에서는 **키를 맞추고** 폭은 그림이 정한다.
+  static const _pickFace = 66.0; // 얼굴 키
+  static const _pickStep = 70.0; // 얼굴 사이 걸음 (= 한 칸의 폭)
+  static const _pickParen = 74.0; // 괄호 키
+
+  /// 괄호 사이. 걸음보다 넓어 이웃 얼굴에 걸쳐 얹히지만, 가장 넓은 얼굴
+  /// (MIA, 70dp)도 넉넉히 감싸려면 이만큼은 벌어져야 한다.
+  static const _pickParenGap = 78.0;
+
+  /// 캐러셀이 시작하는 자리. 열의 배수라 나머지가 곧 목소리 번호가 된다.
+  static const _pickLoop = 5000;
 
   @override
   void initState() {
@@ -247,6 +264,25 @@ class _TTSPageState extends State<TTSPage> with WidgetsBindingObserver {
     _boot();
     _initShareIntent();
     _checkUpdateOnLaunch();
+  }
+
+  /// 키패드가 올라와 있는지. 오르내림이 바뀌는 순간만 보려고 들고 있다.
+  bool _keyboardUp = false;
+
+  /// 키패드를 내리면(뒤로가기든 내리기든) 인풋칸의 포커스도 함께 뗀다.
+  ///
+  /// 안 그러면 키패드는 사라졌는데 커서만 남아 깜박이고, 얼굴도 옅어진
+  /// 채로 있는다. 키패드가 올라오는 중에도 이 알림이 오므로 **오르내림이
+  /// 바뀌는 순간**만 골라 본다.
+  @override
+  void didChangeMetrics() {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      final up = View.of(context).viewInsets.bottom > 0;
+      if (up == _keyboardUp) return;
+      _keyboardUp = up;
+      if (!up && _shortFocus.hasFocus) _shortFocus.unfocus();
+    });
   }
 
   void _onShortFocusChanged() {
@@ -295,6 +331,8 @@ class _TTSPageState extends State<TTSPage> with WidgetsBindingObserver {
   /// 지난번 설정과 소스 목록을 불러온 뒤 모델을 준비한다
   Future<void> _boot() async {
     _settings = await loadSettings();
+    // 언어는 고르지 않는다 — 늘 글을 보고 자동으로 가린다.
+    _settings.lang = 'auto';
     _applySettingsToEngine();
 
     _sources = await loadSources();
@@ -393,30 +431,29 @@ class _TTSPageState extends State<TTSPage> with WidgetsBindingObserver {
       children: [
         Row(
           children: [
-            const Text('저장한 용량', style: _sheetTitle),
+            Text('STORAGE', style: _sheetTitle),
             const Spacer(),
             if (bytes != null && bytes > 0)
               _pixelTap(
                 onTap: clear,
                 padding: const EdgeInsets.symmetric(horizontal: 2, vertical: 4),
-                child: const Text('지우기', style: _sheetAction),
+                child: Text('ERASE', style: _sheetAction),
               ),
           ],
         ),
-        const SizedBox(height: 5),
-        Text(
+        const SizedBox(height: 2),
+        _sheetLine(Text(
           bytes == null
-              ? '재는 중…'
+              ? 'MEASURING'
               : '${_mb(bytes)} / ${_mb(NarrationEngine.voiceLimitBytes)}',
-          style: TextStyle(
-            fontSize: 14,
-            // 넘어도 지우거나 멈추지 않는다. PLAY 와 같은 붉은색으로 여기서도
-            // 알리고, 지울지 말지는 사람이 정한다.
-            color: bytes == null
-                ? kMuted
-                : (_engine.voiceFull ? kRed : kOnSteel),
-          ),
-        ),
+          // 넘어도 지우거나 멈추지 않는다. PLAY 와 같은 붉은색으로 여기서도
+          // 알리고, 지울지 말지는 사람이 정한다.
+          style: bytes == null
+              ? _sheetValue.copyWith(color: kMuted)
+              : (_engine.voiceFull
+                  ? _sheetValue.copyWith(color: kRed)
+                  : _sheetValue),
+        )),
       ],
     );
   }
@@ -482,17 +519,25 @@ class _TTSPageState extends State<TTSPage> with WidgetsBindingObserver {
     final rows = <Widget>[
       Row(
         children: [
-          const Text('업데이트', style: _sheetTitle),
+          Text('UPDATE', style: _sheetTitle),
           const Spacer(),
-          if (_downloading == null && _downloaded == null)
+          // 받는 중에는 '중지' 가 '확인' 자리를 대신한다. 게이지 아래가
+          // 아니라 여기여야 왼쪽 칸의 '지우기' 와 한 줄로 선다.
+          if (_downloading != null)
+            _pixelTap(
+              onTap: () => _downloadCancel?.cancel(),
+              padding: const EdgeInsets.symmetric(horizontal: 2, vertical: 4),
+              child: Text('STOP', style: _sheetAction),
+            )
+          else if (_downloaded == null)
             _pixelTap(
               onTap: check,
               padding: const EdgeInsets.symmetric(horizontal: 2, vertical: 4),
-              child: const Text('확인', style: _sheetAction),
+              child: Text('CHECK', style: _sheetAction),
             ),
         ],
       ),
-      const SizedBox(height: 5),
+      const SizedBox(height: 2),
     ];
 
     final status = _update;
@@ -502,30 +547,22 @@ class _TTSPageState extends State<TTSPage> with WidgetsBindingObserver {
     if (downloading != null) {
       final f = downloading.fraction;
       rows.addAll([
-        PixelGauge(value: f, cells: 12),
-        const SizedBox(height: 8),
-        Row(
-          children: [
-            Expanded(
-              child: Text(
-                f == null
-                    ? '${_mb(downloading.received)} 받는 중'
-                    : '${(f * 100).round()}%  ${_mb(downloading.received)}/${_mb(downloading.total)}',
-                style: const TextStyle(fontSize: 14, color: kOnSteel),
-              ),
-            ),
-            _pixelTap(
-              onTap: () => _downloadCancel?.cancel(),
-              padding: const EdgeInsets.symmetric(horizontal: 2, vertical: 4),
-              child: const Text('그만', style: _sheetAction),
-            ),
-          ],
+        // 게이지의 한가운데를 왼쪽 칸 숫자의 한가운데에 맞춘다. 위에만
+        // 여백을 주고 아래는 비우지 않는다 — 바로 밑의 숫자가 게이지에
+        // 거의 붙어야 한다.
+        const SizedBox(height: (_sheetBodyLine - _sheetGauge) / 2),
+        PixelGauge(value: f, cells: 12, height: _sheetGauge),
+        const SizedBox(height: 2),
+        Text(
+          f == null
+              ? _mb(downloading.received)
+              : '${(f * 100).round()}%  ${_mb(downloading.received)}/${_mb(downloading.total)}',
+          style: _sheetValue,
         ),
       ]);
     } else if (downloaded != null) {
       rows.addAll([
-        const Text('다 받았어요',
-            style: TextStyle(fontSize: 14, color: kOnSteel)),
+        _sheetLine(Text('READY', style: _sheetValue.copyWith(color: kYellow))),
         const SizedBox(height: 10),
         Row(children: [
           _pixelTap(
@@ -535,44 +572,45 @@ class _TTSPageState extends State<TTSPage> with WidgetsBindingObserver {
               redraw();
             }),
             padding: const EdgeInsets.symmetric(horizontal: 2, vertical: 4),
-            child: const Text('설치',
-                style: TextStyle(fontSize: 16, color: kYellow)),
+            child: Text('INSTALL',
+                style: displayStyle(
+                    size: 13, color: kYellow, letterSpacing: 1.4)),
           ),
         ]),
       ]);
     } else if (status == null) {
-      rows.add(const Text('확인 중…',
-          style: TextStyle(fontSize: 14, color: kMuted)));
+      rows.add(_sheetLine(
+          Text('CHECKING', style: _sheetValue.copyWith(color: kMuted))));
     } else if (status is UpToDate) {
-      rows.add(Text('최신입니다. v ${status.current}',
-          style: const TextStyle(fontSize: 14, color: kOnSteel)));
+      rows.add(_sheetLine(Text('UP TO DATE', style: _sheetValue)));
     } else if (status is UpdateAvailable) {
       rows.addAll([
-        Text(
-          'v ${status.current} → v ${status.latest}'
+        _sheetLine(Text(
+          'v ${status.latest}'
           '${status.bytes > 0 ? '  ·  ${_mb(status.bytes)}' : ''}',
-          style: const TextStyle(fontSize: 14, color: kOnSteel),
-        ),
+          style: _sheetValue.copyWith(color: kYellow),
+        )),
         const SizedBox(height: 10),
         Row(children: [
           _pixelTap(
             onTap: () => download(status),
             padding: const EdgeInsets.symmetric(horizontal: 2, vertical: 4),
-            child: Text(status.apkUrl == null ? '릴리스 열기' : '받기',
-                style: const TextStyle(fontSize: 16, color: kYellow)),
+            child: Text(status.apkUrl == null ? 'RELEASES' : 'DOWNLOAD',
+                style: displayStyle(
+                    size: 13, color: kYellow, letterSpacing: 1.4)),
           ),
         ]),
       ]);
     } else {
       rows.addAll([
-        const Text('GitHub 에 닿지 못했어요.',
-            style: TextStyle(fontSize: 14, color: kMuted)),
+        _sheetLine(
+            Text('NO NETWORK', style: _sheetValue.copyWith(color: kMuted))),
         const SizedBox(height: 10),
         Row(children: [
           _pixelTap(
             onTap: openReleasesPage,
             padding: const EdgeInsets.symmetric(horizontal: 2, vertical: 4),
-            child: const Text('릴리스 열기', style: _sheetAction),
+            child: Text('RELEASES', style: _sheetAction),
           ),
         ]),
       ]);
@@ -589,9 +627,30 @@ class _TTSPageState extends State<TTSPage> with WidgetsBindingObserver {
   }
 
   /// 설정 시트 아래 두 칸이 같은 결로 보이게 묶어 둔 글자 모양
-  static const _sheetTitle =
-      TextStyle(fontSize: 15, color: kYellow, fontWeight: FontWeight.w700);
-  static const _sheetAction = TextStyle(fontSize: 14, color: kSlate);
+  /// 아래 두 칸의 제목·곁단추·값. 셋 다 표시어(Panchang)로 적는다.
+  /// 위쪽 SPEED·QUALITY 보다 한 급 작아, 눈이 먼저 위로 간다.
+  static final _sheetTitle =
+      displayStyle(size: 12, color: kYellow, letterSpacing: 1.4);
+  static final _sheetAction =
+      displayStyle(size: 11, color: kSlate, letterSpacing: 1.2);
+  static final _sheetValue =
+      displayStyle(size: 13, color: kOnSteel, letterSpacing: 1.2);
+
+  /// 설정 시트 두 칸의 '첫 줄' 높이.
+  ///
+  /// 왼쪽 칸에는 저장한 용량 숫자가, 오른쪽 칸에는 게이지나 안내 문구가
+  /// 온다. 생김새가 달라도 한 줄로 나란히 보이도록 높이를 못 박고
+  /// 가운데에 세운다.
+  static const _sheetBodyLine = 20.0;
+
+  /// 그 줄에 쓰는 게이지의 높이
+  static const _sheetGauge = 10.0;
+
+  /// 첫 줄에 놓는다 — 높이를 고정하고 세로 가운데에 세운다
+  static Widget _sheetLine(Widget child) => SizedBox(
+        height: _sheetBodyLine,
+        child: Align(alignment: Alignment.centerLeft, child: child),
+      );
 
   /// 바이트를 사람이 읽을 만한 짧은 숫자로
   static String _mb(int bytes) {
@@ -1031,12 +1090,105 @@ class _TTSPageState extends State<TTSPage> with WidgetsBindingObserver {
     }
   }
 
+  /// 목소리 고르개 — 얼굴을 옆으로 쓸어 고른다.
+  ///
+  /// [PageView] 라 손을 떼면 한 칸에 딱 맞춰 선다(snap). 가운데 칸이
+  /// 고른 목소리이고, 좌우 이웃은 조금 작고 옅게 그려 누가 가운데인지
+  /// 눈으로 알 수 있게 했다. 괄호는 자리에 붙박이로 두고 얼굴만 지나간다.
+  Widget _voicePicker(PageController page, void Function(VoidCallback) update) {
+    final voices = Settings.voices;
+
+    // 부모(시트)의 좌우 여백 밖으로 나가 화면 폭을 그대로 쓴다.
+    return SizedBox(
+      height: _pickParen,
+      child: OverflowBox(
+        maxWidth: MediaQuery.sizeOf(context).width,
+        child: Stack(
+        alignment: Alignment.center,
+        children: [
+          PageView.builder(
+            controller: page,
+            // 끝을 두지 않는다 — 어느 쪽으로 밀어도 계속 돈다
+            itemCount: null,
+            padEnds: true,
+            onPageChanged: (i) =>
+                update(() => _settings.voice = voices[i % voices.length]),
+            itemBuilder: (_, i) => AnimatedBuilder(
+              animation: page,
+              builder: (_, __) {
+                // 지금 몇 번째 칸에 서 있는지 (쓸고 있는 중에는 소수)
+                final at = page.hasClients && page.position.haveDimensions
+                    ? (page.page ?? i.toDouble())
+                    : i.toDouble();
+                final away = (at - i).abs().clamp(0.0, 1.0);
+                final name = _voiceFaces[voices[i % voices.length]];
+                if (name == null) return const SizedBox.shrink();
+                return Center(
+                  child: Opacity(
+                    opacity: 1 - 0.55 * away,
+                    child: Image.asset(
+                      'assets/char/$name.png',
+                      height: _pickFace * (1 - 0.18 * away),
+                      // 픽셀 그림이라 매끄럽게 줄이면 뭉갠다
+                      filterQuality: FilterQuality.none,
+                      isAntiAlias: false,
+                    ),
+                  ),
+                );
+              },
+            ),
+          ),
+          // 붙박이 괄호. 한 칸의 양 끝에 서서, 지나가는 얼굴 중
+          // 가운데 칸에 든 것을 감싼다.
+          IgnorePointer(
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                _paren(flip: false),
+                const SizedBox(width: _pickParenGap),
+                _paren(flip: true),
+              ],
+            ),
+          ),
+        ],
+        ),
+      ),
+    );
+  }
+
+  /// 괄호 한 짝. 오른쪽은 같은 밑그림을 좌우로 뒤집어 쓴다.
+  Widget _paren({required bool flip}) {
+    final icon = PixelIcon(
+      kGlyphParen,
+      cell: _pickParen / kGlyphParen.height * 2,
+      color: kYellow,
+    );
+    return flip
+        ? Transform(
+            alignment: Alignment.center,
+            transform: Matrix4.identity()..scale(-1.0, 1.0),
+            child: icon,
+          )
+        : icon;
+  }
+
   // ---- 설정 시트 ----
   void _openSettings() {
     // 시트가 떠 있는 동안 보여줄 값이라 열 때마다 다시 잰다
     NarrationEngine.voiceBytes().then((b) {
       if (mounted) setState(() => _voiceBytes = b);
     });
+    // 고르개는 지금 목소리 자리에서 시작한다. 시트가 닫힐 때 버린다.
+    // 고르개는 시트 좌우 여백을 넘어 화면 끝까지 펼친다 — 잘리는 자리가
+    // 여백 언저리가 아니라 화면 가장자리여야 얼굴이 자연스럽게 걸친다.
+    final sheetWidth = MediaQuery.sizeOf(context).width;
+    final page = PageController(
+      // 캐러셀은 끝없이 돈다. 한참 앞에서 시작해 어느 쪽으로 밀어도
+      // 목록이 끊기지 않는다 — 자리 번호를 열로 나눈 나머지가 목소리다.
+      initialPage:
+          _pickLoop + Settings.voices.indexOf(_settings.voice).clamp(0, 9),
+      viewportFraction: _pickStep / sheetWidth,
+    );
     showModalBottomSheet<void>(
       context: context,
       backgroundColor: kSteel,
@@ -1055,7 +1207,7 @@ class _TTSPageState extends State<TTSPage> with WidgetsBindingObserver {
 
           return Padding(
             padding: EdgeInsets.fromLTRB(
-                20, 16, 20, MediaQuery.of(ctx).viewInsets.bottom + 48),
+                20, 16, 20, MediaQuery.of(ctx).viewInsets.bottom + 51),
             child: Column(
               mainAxisSize: MainAxisSize.min,
               crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -1069,41 +1221,25 @@ class _TTSPageState extends State<TTSPage> with WidgetsBindingObserver {
                       style: displayStyle(
                           size: 15, color: kYellow, letterSpacing: 2.4)),
                 ),
-                const SizedBox(height: 20),
-                DropdownButtonFormField<String>(
-                  value: _settings.voice,
-                  style: const TextStyle(fontSize: 15, color: Colors.white),
-                  decoration: _dec('목소리'),
-                  items: _voiceNames.entries
-                      .map((e) => DropdownMenuItem(
-                          value: e.key, child: Text('${e.value} (${e.key})')))
-                      .toList(),
-                  onChanged: (v) => update(() => _settings.voice = v!),
+                const SizedBox(height: 18),
+                _voicePicker(page, update),
+                const SizedBox(height: 10),
+                Center(
+                  child: Text(
+                    _voiceNames[_settings.voice] ?? '',
+                    style: displayStyle(
+                        size: 14, color: Colors.white, letterSpacing: 2.4),
+                  ),
                 ),
-                const SizedBox(height: 12),
-                DropdownButtonFormField<String>(
-                  value: _settings.lang,
-                  style: const TextStyle(fontSize: 15, color: Colors.white),
-                  decoration: _dec('언어'),
-                  items: [
-                    const DropdownMenuItem(value: 'auto', child: Text('자동')),
-                    ...availableLangs.map(
-                      (l) => DropdownMenuItem(
-                        value: l,
-                        child: Text(l == 'na' ? 'na (미지정)' : l),
-                      ),
-                    ),
-                  ],
-                  onChanged: (v) => update(() => _settings.lang = v!),
-                ),
-                const SizedBox(height: 6),
-                _slider('속도', _settings.speed.toStringAsFixed(2),
+                const SizedBox(height: 18),
+                _slider('SPEED', _settings.speed.toStringAsFixed(2),
                     _settings.speed, 0.7, 2.0,
                     (v) => update(() => _settings.speed = v)),
-                _slider('품질', '${_settings.steps}',
+                const SizedBox(height: 14),
+                _slider('QUALITY', '${_settings.steps}',
                     _settings.steps.toDouble(), 2, 12,
                     (v) => update(() => _settings.steps = v.round())),
-                const SizedBox(height: 10),
+                const SizedBox(height: 18),
                 Container(height: 2, color: kLine),
                 const SizedBox(height: 16),
                 // 둘 다 짧아서 나란히 놓아도 넉넉하다
@@ -1120,7 +1256,7 @@ class _TTSPageState extends State<TTSPage> with WidgetsBindingObserver {
           );
         },
       ),
-    );
+    ).whenComplete(page.dispose);
   }
 
   // ---------------------------------------------------------------- UI
@@ -1528,20 +1664,55 @@ class _TTSPageState extends State<TTSPage> with WidgetsBindingObserver {
           child: PixelCard(
             fill: kSteel,
             padding: EdgeInsets.zero,
-            child: TextField(
-              controller: _shortController,
-              focusNode: _shortFocus,
-              maxLines: 1,
-              textInputAction: TextInputAction.done,
-              onChanged: (_) => setState(() {}), // 버튼 문구를 바로 바꾸기 위해
-              cursorColor: kYellow,
-              style: const TextStyle(fontSize: 15, color: Colors.white),
-              decoration: const InputDecoration(
-                isDense: true,
-                contentPadding:
-                    EdgeInsets.symmetric(horizontal: 14, vertical: 14),
-                border: InputBorder.none,
-              ),
+            child: Stack(
+              children: [
+                TextField(
+                  controller: _shortController,
+                  focusNode: _shortFocus,
+                  maxLines: 1,
+                  textInputAction: TextInputAction.done,
+                  // 버튼 문구를 바로 바꾸기 위해
+                  onChanged: (_) => setState(() {}),
+                  cursorColor: kYellow,
+                  style: const TextStyle(fontSize: 15, color: Colors.white),
+                  decoration: const InputDecoration(
+                    isDense: true,
+                    contentPadding:
+                        EdgeInsets.symmetric(horizontal: 14, vertical: 14),
+                    border: InputBorder.none,
+                  ),
+                ),
+                // 평소에는 연필이 칸 뒤에 깔린 밑그림이다 — 누르는 그림이
+                // 아니라서 손짓을 그냥 흘려보내고, 칸 아무 데나 누르면
+                // 곧바로 입력이 시작된다.
+                //
+                // 커서가 들어오면 가위표로 바뀌고 그때만 손짓을 받는다.
+                // 키패드를 닫을 길이 하나 더 생기는 셈이다.
+                Positioned(
+                  right: 14,
+                  top: 0,
+                  bottom: 0,
+                  child: IgnorePointer(
+                    ignoring: !_shortFocused,
+                    child: GestureDetector(
+                      behavior: HitTestBehavior.opaque,
+                      onTap: _shortFocus.unfocus,
+                      child: Center(
+                        // 두 밑그림의 눈금이 달라(가위표는 절반) 보이는
+                        // 크기를 맞추려면 눈금도 함께 바꿔야 한다.
+                        child: PixelIcon(
+                          _shortFocused ? kGlyphCross : kGlyphEdit,
+                          // 가위표 밑그림은 눈금이 절반이라 같은 크기로
+                          // 보이려면 4 가 되어야 하고, 거기서 2/3 로 줄여
+                          // 연필보다 조금 작게 놓는다.
+                          cell: _shortFocused ? 8 / 3 : 2,
+                          color: kSlate,
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+              ],
             ),
           ),
         ),
@@ -1857,61 +2028,44 @@ class _TTSPageState extends State<TTSPage> with WidgetsBindingObserver {
     );
   }
 
-  InputDecoration _dec(String label) => InputDecoration(
-        labelText: label,
-        labelStyle: const TextStyle(color: kOnSteel, fontSize: 15),
-        filled: true,
-        fillColor: kBg,
-        // 픽셀 화면에서는 둥근 모서리를 쓰지 않는다
-        border: const OutlineInputBorder(
-          borderRadius: BorderRadius.zero,
-          borderSide: BorderSide(color: kLine),
-        ),
-        enabledBorder: const OutlineInputBorder(
-          borderRadius: BorderRadius.zero,
-          borderSide: BorderSide(color: kLine),
-        ),
-        focusedBorder: const OutlineInputBorder(
-          borderRadius: BorderRadius.zero,
-          borderSide: BorderSide(color: kYellow),
-        ),
-      );
 
+  /// 설정 시트의 손잡이 한 줄.
+  ///
+  /// 이름과 값을 윗줄에 좌우로 벌려 놓고, 트랙은 그 아래를 가로로 꽉
+  /// 채운다. 트랙은 양쪽 모두 노랑이고 손잡이만 그보다 두툼한 네모라,
+  /// 어디까지 왔는지가 아니라 **지금 어디에 서 있는지**를 보여 준다.
   Widget _slider(String label, String value, double v, double min, double max,
       ValueChanged<double> onChanged) {
-    // 두 줄 사이 빈틈은 슬라이더가 손가락 닿는 최소 높이(48dp)를 차지하면서
-    // 생기는 위아래 여백이다. 줄 높이를 여기서 정해 그 빈틈을 조절한다.
-    // 30 까지 줄여 봤으나 답답해서 원래 높이인 48 로 되돌렸다.
-    return SizedBox(
-      height: 48,
-      child: Row(
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        SizedBox(
-            width: 40,
-            child: Text(label,
-                style: const TextStyle(fontSize: 15, color: Colors.white))),
-        Expanded(
-          child: SliderTheme(
-            data: SliderTheme.of(context).copyWith(
-              trackHeight: 4,
-              activeTrackColor: kYellow,
-              inactiveTrackColor: kSteel,
-              thumbColor: kYellow,
-              overlayColor: kYellow.withValues(alpha: 0.14),
-              thumbShape: const PixelThumbShape(),
-              trackShape: const RectangularSliderTrackShape(),
-            ),
-            child: Slider(value: v, min: min, max: max, onChanged: onChanged),
-          ),
+        Row(
+          children: [
+            Text(label,
+                style: displayStyle(
+                    size: 12, color: Colors.white, letterSpacing: 1.6)),
+            const Spacer(),
+            Text(value,
+                style: displayStyle(
+                    size: 12, color: kYellow, letterSpacing: 1.2)),
+          ],
         ),
-        SizedBox(
-          width: 46,
-          child: Text(value,
-              textAlign: TextAlign.right,
-              style: displayStyle(size: 13, color: kYellow)),
+        SliderTheme(
+          data: SliderTheme.of(context).copyWith(
+            trackHeight: 4,
+            activeTrackColor: kYellow,
+            inactiveTrackColor: kYellow,
+            thumbColor: kYellow,
+            overlayColor: kYellow.withValues(alpha: 0.14),
+            thumbShape: const PixelThumbShape(size: 16),
+            trackShape: const RectangularSliderTrackShape(),
+            // 트랙이 칸 끝까지 닿도록 기본 여백을 걷어낸다
+            padding: EdgeInsets.zero,
+          ),
+          child: Slider(value: v, min: min, max: max, onChanged: onChanged),
         ),
       ],
-      ),
     );
   }
+
 }

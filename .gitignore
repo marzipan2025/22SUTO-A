@@ -20,3 +20,6 @@ android/local.properties
 android/key.properties
 *.iml
 .idea/
+
+# 파이썬 스크립트 찌꺼기
+scripts/__pycache__/

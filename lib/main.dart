@@ -195,6 +195,9 @@ class _TTSPageState extends State<TTSPage> with WidgetsBindingObserver {
   /// 키패드가 올라오면 얼굴이 가려질 자리에 겹치므로 같이 옅게 한다.
   bool _shortFocused = false;
 
+  /// 얼굴을 누르고 있는 동안. 손을 뗄 때까지 옅어진다.
+  bool _facePressed = false;
+
   /// 글마다 문장별로 음성을 만들어 뒀는지. 목록 카드 아래 띠에 쓴다.
   /// 폴더를 훑어야 알 수 있으므로 그때그때 재지 않고 모아 두고 쓴다.
   Map<String, List<bool>> _made = {};
@@ -209,7 +212,11 @@ class _TTSPageState extends State<TTSPage> with WidgetsBindingObserver {
 
   /// 얼굴의 폭. 그림에서 투명한 가장자리를 모두 잘라내 두었으므로
   /// 이 값이 곧 보이는 얼굴의 폭이다. 높이는 그림마다 다르다.
-  static const _faceWidth = 120.0;
+  ///
+  /// 120 에서 114 로 줄였다. 크기를 정하는 손잡이가 폭 하나뿐이라 높이는
+  /// 그림의 세로/가로 비를 타고 함께 줄어든다 — 남자 캐릭터들의 비가
+  /// 1.21~1.47 이므로 높이가 7.3~8.8dp 줄어든다. 비례는 그대로다.
+  static const _faceWidth = 114.0;
 
   /// 화면 바깥 여백 (Column 의 좌우 안쪽 여백)
   static const _pagePad = 16.0;
@@ -304,8 +311,7 @@ class _TTSPageState extends State<TTSPage> with WidgetsBindingObserver {
     // 화면이 멈춰 있었다. 급한 일이 아니니 뒤에서 하고, 끝나면 띠를 그린다.
     unawaited(() async {
       await NarrationEngine.pruneVoice(
-        oldestFirst: _sources.map((s) => s.id).toList(),
-        inUseSourceId: _selectedId,
+        liveIds: _sources.map((s) => s.id).toList(),
       );
       if (mounted) await _refreshMade();
     }());
@@ -403,7 +409,13 @@ class _TTSPageState extends State<TTSPage> with WidgetsBindingObserver {
               ? '재는 중…'
               : '${_mb(bytes)} / ${_mb(NarrationEngine.voiceLimitBytes)}',
           style: TextStyle(
-              fontSize: 14, color: bytes == null ? kMuted : kOnSteel),
+            fontSize: 14,
+            // 넘어도 지우거나 멈추지 않는다. PLAY 와 같은 붉은색으로 여기서도
+            // 알리고, 지울지 말지는 사람이 정한다.
+            color: bytes == null
+                ? kMuted
+                : (_engine.voiceFull ? kRed : kOnSteel),
+          ),
         ),
       ],
     );
@@ -709,6 +721,23 @@ class _TTSPageState extends State<TTSPage> with WidgetsBindingObserver {
     }
   }
 
+  /// 굴러가던 자동 스크롤을 그 자리에 세운다.
+  ///
+  /// [ScrollController.animateTo] 는 350ms 동안 돈다. 그 사이에 목록이
+  /// 화면에서 빠지면(뒤로 가기·정지·다른 글 고르기) 애니메이션이 끝나는
+  /// 순간 이미 트리에 없는 스크롤뷰를 더듬는다:
+  ///
+  ///   findRenderObject() called for … _ElementLifecycle.inactive
+  ///   ScrollableState.setIgnorePointer ← ScrollPosition.beginActivity
+  ///   ← goIdle ← goBallistic ← DrivenScrollActivity._end
+  ///
+  /// 목록을 치우기 전에 불러 굴러가던 것을 먼저 세운다. 같은 자리로
+  /// jumpTo 하면 돌던 애니메이션이 idle 로 갈린다 — 자리는 그대로다.
+  void _stopScroll() {
+    if (!_listController.hasClients) return;
+    _listController.jumpTo(_listController.offset);
+  }
+
   /// 문장 목록으로 들어온 직후, 읽고 있는 자리로 곧장 앉힌다.
   ///
   /// 이 자리에서 바로 옮길 수는 없다 — 목록이 아직 만들어지지 않아 높이도
@@ -836,6 +865,7 @@ class _TTSPageState extends State<TTSPage> with WidgetsBindingObserver {
 
     // 대기열·합성해 둔 음성 파일·재생 위치까지 전부 없앤다
     await _engine.dropSource(item.id);
+    if (!mounted) return;
 
     setState(() {
       _sources.removeWhere((s) => s.id == item.id);
@@ -975,6 +1005,7 @@ class _TTSPageState extends State<TTSPage> with WidgetsBindingObserver {
     await _engine.stop();
     _persistProgress(); // 보관 후 남은 파일 경로로 갱신
     await _playback.invokeMethod('stop').catchError((_) => null);
+    _stopScroll();
     if (mounted) setState(() => _showList = false);
     unawaited(_refreshMade());
   }
@@ -982,6 +1013,7 @@ class _TTSPageState extends State<TTSPage> with WidgetsBindingObserver {
   /// 뒤로가기는 입력 화면으로 돌아가기만 할 뿐, 재생 중인 소리는 멈추지 않는다.
   void _back() {
     _persistProgress();
+    _stopScroll();
     if (mounted) setState(() {
       _showList = false;
     });
@@ -989,10 +1021,13 @@ class _TTSPageState extends State<TTSPage> with WidgetsBindingObserver {
   }
 
   Future<void> _togglePause() async {
-    if (_engine.isPlaying) {
-      await _engine.pause();
-    } else {
+    // 재생기의 playing 이 아니라 사람의 뜻을 본다. 문장이 넘어가는 틈에는
+    // playing 이 false 라, 그걸 보고 고르면 멈추려는 손짓이 도리어
+    // 재생을 거는 쪽으로 간다.
+    if (_engine.isPaused) {
       await _engine.resume();
+    } else {
+      await _engine.pause();
     }
   }
 
@@ -1112,7 +1147,10 @@ class _TTSPageState extends State<TTSPage> with WidgetsBindingObserver {
               _header(),
               const SizedBox(height: 14),
               Expanded(child: _showList ? _progressView() : _inputView()),
-              const SizedBox(height: 10),
+              // 진행 화면에서는 이 여백에서 3dp 를 덜어 문장 목록에 준다.
+              // Column 이라 덜어낸 만큼 위의 Expanded 가 늘어날 뿐,
+              // 타임라인과 아래 단추는 있던 자리에 그대로 있는다.
+              SizedBox(height: _showList ? 7 : 10),
               if (!_showList) ...[
                 _shortInputRow(),
                 const SizedBox(height: 12),
@@ -1281,14 +1319,16 @@ class _TTSPageState extends State<TTSPage> with WidgetsBindingObserver {
   /// 진행 화면 한가운데 — 지금 무엇을 하는 중인지, 어디까지 왔는지
   Widget _headerStatus() {
     final String word;
+    // PLAYING/PAUSED 도 재생기의 순간 상태가 아니라 사람의 뜻을 따른다.
+    // 문장 사이의 틈마다 PLAYING 이 PAUSED 로 깜박이면 안 된다.
     if (_engine.error != null) {
       word = 'ERROR';
-    } else if (_engine.isPlaying) {
-      word = 'PLAYING';
-    } else if (_engine.isRunning) {
+    } else if (!_engine.isRunning) {
+      word = 'STOPPED';
+    } else if (_engine.isPaused) {
       word = 'PAUSED';
     } else {
-      word = 'STOPPED';
+      word = 'PLAYING';
     }
 
     return Column(
@@ -1478,6 +1518,9 @@ class _TTSPageState extends State<TTSPage> with WidgetsBindingObserver {
 
   /// 하단 인풋박스 한 줄 — 셀이 되지 않는 단문 재생용.
   /// 목록이 하나라도 있으면 오른쪽에 붙여넣기·파일추가 아이콘이 따라붙는다.
+  ///
+  /// 안내 문구는 두지 않는다. 빈 칸으로 두면 캐릭터가 그 위에 서 있어도
+  /// 글자와 겹쳐 어수선해 보이지 않는다.
   Widget _shortInputRow() {
     return Row(
       children: [
@@ -1498,8 +1541,6 @@ class _TTSPageState extends State<TTSPage> with WidgetsBindingObserver {
                 contentPadding:
                     EdgeInsets.symmetric(horizontal: 14, vertical: 14),
                 border: InputBorder.none,
-                hintText: '짧은 문장 바로 재생',
-                hintStyle: TextStyle(fontSize: 15, color: kOnSteel),
               ),
             ),
           ),
@@ -1550,7 +1591,7 @@ class _TTSPageState extends State<TTSPage> with WidgetsBindingObserver {
           _boardStat(
             glyph: kGlyphPlay,
             value: playIdx >= 0 ? '${playIdx + 1}' : '-',
-            dim: !(_engine.isPlaying && !_engine.isStalled),
+            dim: _engine.isPaused || !_engine.isRunning,
           ),
           const SizedBox(width: 22),
           _boardStat(
@@ -1687,6 +1728,11 @@ class _TTSPageState extends State<TTSPage> with WidgetsBindingObserver {
     });
   }
 
+  void _setFacePressed(bool down) {
+    if (_facePressed == down) return;
+    setState(() => _facePressed = down);
+  }
+
   // ---- 하단 버튼 ----
   Widget _controls() {
     if (!_showList) {
@@ -1694,33 +1740,36 @@ class _TTSPageState extends State<TTSPage> with WidgetsBindingObserver {
       // 인풋박스에 글자가 있으면 그것만, 없으면 선택된 셀을 읽는다
       final canStart = _ready && (hasShort || _selectedSource != null);
 
+      // 단추는 오른쪽. 왼쪽 바닥은 캐릭터가 선다.
       return _controlBox(
         Row(
+          mainAxisAlignment: MainAxisAlignment.end,
           children: [
             _wordAction(
               label: !_ready ? 'LOADING' : (hasShort ? 'SAY' : 'PLAY'),
               weight: FontWeight.w700,
               onTap: canStart ? _start : null,
             ),
-            const Spacer(),
           ],
         ),
       );
     }
 
-    // PAUSE 와 STOP 이 같은 크기라 밑선만 맞추면 윗선도 함께 선다.
+    // STOP 은 뺐다. 뒤로가기로 나가면 소리는 그대로 이어지고, 다른 글을
+    // 고르면 그때 멎는다 — 굳이 세우는 단추를 둘 이유가 없었다.
     return _controlBox(
       Row(
-        crossAxisAlignment: CrossAxisAlignment.baseline,
-        textBaseline: TextBaseline.alphabetic,
+        mainAxisAlignment: MainAxisAlignment.end,
         children: [
           _wordAction(
-            label: _engine.isPlaying ? 'PAUSE' : 'PLAY',
+            label: _engine.isPaused ? 'PLAY' : 'PAUSE',
             weight: FontWeight.w700,
             onTap: _togglePause,
+            // 만들어둔 음성이 5GB 를 넘었다는 신호. 저절로 지우지도, 만들기를
+            // 멈추지도 않으므로 여기서 알린다 — 설정의 '저장한 용량' 에서
+            // 지울 수 있다.
+            color: _engine.voiceFull ? kRed : null,
           ),
-          const Spacer(),
-          _wordAction(label: 'STOP', onTap: _stop),
         ],
       ),
     );
@@ -1729,14 +1778,15 @@ class _TTSPageState extends State<TTSPage> with WidgetsBindingObserver {
   /// 아래 단추가 서는 판. 두 화면이 같은 얼굴을 쓴다.
   /// 진행 화면 맨 윗줄(대시보드)과 같은 색·같은 픽셀 카드다.
   ///
-  /// 얼굴은 이 판의 **바닥에 발을 맞추고** 위로 솟는다. 판보다 크므로
+  /// 얼굴은 이 판의 **왼쪽 바닥에 발을 맞추고** 위로 솟는다. 판보다 크므로
   /// 위쪽 목록을 가리는데, 그러라고 맨 나중에 그린다.
+  /// 단추는 오른쪽에 서므로 얼굴과 겹치지 않는다.
   Widget _controlBox(Widget child) {
     final face = _faceAsset;
     return Stack(
       // 판 밖으로 솟는 부분이 잘리지 않아야 한다
       clipBehavior: Clip.none,
-      alignment: Alignment.bottomCenter,
+      alignment: Alignment.bottomLeft,
       children: [
         PixelCard(
           fill: kBoard,
@@ -1746,10 +1796,21 @@ class _TTSPageState extends State<TTSPage> with WidgetsBindingObserver {
         if (face != null)
           Positioned(
             bottom: 0,
-            child: IgnorePointer(
-              // 타임라인을 만지는 동안에는 옅어져 뒤가 비친다
+            // 왼쪽 끝에 딱 붙으면 판의 모서리 계단과 얼굴선이 맞물려
+            // 답답해 보인다. 14dp 띄운다.
+            left: 14,
+            // 눌러도 하는 일은 없다. 손끝을 따라 옅어졌다 돌아오는 것이
+            // 전부다 — 눌리는 것이라는 표시.
+            child: GestureDetector(
+              behavior: HitTestBehavior.opaque,
+              onTapDown: (_) => _setFacePressed(true),
+              onTapUp: (_) => _setFacePressed(false),
+              onTapCancel: () => _setFacePressed(false),
+              // 타임라인을 만지는 동안에도, 키패드가 올라와도 옅어진다
               child: AnimatedOpacity(
-                opacity: _scrubTouching || _shortFocused ? 0.3 : 1,
+                opacity: _facePressed || _scrubTouching || _shortFocused
+                    ? 0.3
+                    : 1,
                 duration: const Duration(milliseconds: 120),
                 child: Image.asset(
                   face,
@@ -1774,6 +1835,7 @@ class _TTSPageState extends State<TTSPage> with WidgetsBindingObserver {
     required VoidCallback? onTap,
     double size = 15,
     FontWeight weight = FontWeight.w500,
+    Color? color,
   }) {
     return GestureDetector(
       behavior: HitTestBehavior.opaque,
@@ -1786,7 +1848,7 @@ class _TTSPageState extends State<TTSPage> with WidgetsBindingObserver {
             size: size,
             color: onTap == null
                 ? kOnLight.withValues(alpha: 0.3)
-                : kOnLight,
+                : (color ?? kOnLight),
             weight: weight,
             letterSpacing: 1.5,
           ),

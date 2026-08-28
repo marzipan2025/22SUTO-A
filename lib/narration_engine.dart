@@ -78,6 +78,13 @@ class NarrationEngine extends ChangeNotifier {
 
   /// 글별로 보관해 둔 대기열 — sourceId → (문장 번호 → 음성 파일 경로).
 
+  /// 이미 버려진 엔진인가.
+  ///
+  /// 엔진의 거의 모든 일은 await 를 건너 뛴 뒤에 화면에 알린다 — 합성,
+  /// 재생, 폴더 지우기. 그 사이에 화면이 없어지면 알릴 곳이 사라지는데,
+  /// ChangeNotifier 는 그때 예외를 던진다. 버려졌으면 조용히 넘어간다.
+  bool _disposed = false;
+
   int _generation = 0;
   int _currentIndex = -1;
   int _synthesizingIndex = -1;
@@ -95,9 +102,13 @@ class NarrationEngine extends ChangeNotifier {
   bool _userPaused = false;
   bool _pumping = false;
 
-  /// 저장공간이 [voiceLimitBytes] 에 닿아 더 만들지 않는 중.
-  /// 앞쪽 빈 자리를 끝까지 채우기로 했으니, 멈추는 자리는 여기 하나뿐이다.
-  bool _storageFull = false;
+  /// 만들어둔 음성이 [voiceLimitBytes] 를 넘었다.
+  ///
+  /// **넘어도 아무것도 막지 않고 아무것도 지우지 않는다.** 만들던 것은
+  /// 계속 만들고, 쌓아둔 것도 그대로 둔다. PLAY 를 붉게 물들여 알리기만
+  /// 하고, 지울지 말지는 사람이 설정에서 정한다.
+  bool _voiceFull = false;
+  bool get voiceFull => _voiceFull;
   int _madeSinceCheck = 0;
   bool _pumpAgain = false; // 미는 동안 또 밀어 달라는 요청이 왔다
 
@@ -129,6 +140,15 @@ class NarrationEngine extends ChangeNotifier {
   int get currentIndex => _currentIndex;
   int get synthesizingIndex => _synthesizingIndex;
   bool get isRunning => _running;
+
+  /// 손수 세워 두었나 — 사람이 PAUSE 를 눌렀는지.
+  ///
+  /// **화면은 [isPlaying] 이 아니라 이 값을 봐야 한다.** 재생기의 playing 은
+  /// 문장이 넘어가는 틈에도 잠깐씩 false 가 된다(실측 30%). 그 값으로
+  /// 단추를 그리면, 듣고 있는 중인데 단추에 PLAY 라고 적혀 있고, 그때 누르면
+  /// 멈추는 대신 재생을 한 번 더 걸게 된다 — 그래서 한 번 더 눌러야
+  /// 비로소 멈춘다.
+  bool get isPaused => _userPaused;
   bool get isStalled => _stalled;
   bool get isPlaying => player.playing;
   String get status => _status;
@@ -165,7 +185,7 @@ class NarrationEngine extends ChangeNotifier {
   /// 일꾼은 한 번 빠져나오면 스스로 돌아오지 않는다. 그동안 재생은 이어져
   /// 준비된 데까지 읽다가 조용히 멈춰 버린다. 그 자리를 여기서 막는다.
   void _kickIfIdle() {
-    if (_items.isEmpty || _tts == null || _storageFull) return;
+    if (_items.isEmpty || _tts == null) return;
     if (!player.playing) return;
     if (_synthesizingIndex >= 0) return; // 이미 만드는 중이면 그대로 둔다
 
@@ -291,7 +311,7 @@ class NarrationEngine extends ChangeNotifier {
     // 뒤에도 그대로 되찾는다 — 메모리에 표를 들고 있을 필요가 없다.
     _attachMade(startAt);
 
-    _storageFull = false;
+    _voiceFull = false;
     _madeSinceCheck = 0;
     _playlistGen++;
     _playlistEnd = startAt;
@@ -396,19 +416,27 @@ class NarrationEngine extends ChangeNotifier {
 
   Future<void> stop() => park();
 
+  /// 세운다. **뜻을 먼저 알리고** 재생기에 시킨다.
+  ///
+  /// 전에는 재생기가 답할 때까지 기다린 뒤에 알렸다. 그런데 [AudioPlayer.play]
+  /// 는 재생목록이 비어 있거나 플랫폼을 다시 깨워야 할 때 한참 돌아오지
+  /// 않는다. 그동안 화면은 옛 상태 그대로라, 눌렀는데 아무 일도 없는 것처럼
+  /// 보이고 한 번 더 누르게 된다.
   Future<void> pause() async {
     _userPaused = true;
-    await player.pause();
     notifyListeners();
+    await player.pause();
   }
 
   Future<void> resume() async {
     _userPaused = false;
-    await player.play();
+    notifyListeners();
     // 세워 둔 사이에 다음 문장이 다 만들어져 대기열에 들어와 있을 수 있다.
     // 그때는 재생기가 아직 그 자리에 서 있지 않으므로 밀어 준다.
     unawaited(_pump(_generation));
-    notifyListeners();
+    unawaited(player.play().catchError((Object e, StackTrace st) {
+      logger.e('재생 재개 실패', error: e, stackTrace: st);
+    }));
   }
 
   Future<void> skipNext() => seekToUnit(_currentIndex + 1);
@@ -486,9 +514,8 @@ class NarrationEngine extends ChangeNotifier {
   /// 앞쪽에 빈 자리가 있으면 아무리 멀어도 끝까지 계속 채운다. 준비분이
   /// 몇 개든 쉬지 않는다 — 되찾은 음성이 앞쪽에 많다는 이유로 손을 놓으면,
   /// 그 사이사이의 빈 자리가 영영 채워지지 않는다.
-  /// 저장공간은 [_storageFull] 로 따로 막는다.
+  /// 저장공간이 차도 멈추지 않는다 — 넘었다는 것은 [voiceFull] 로 알리기만 한다.
   int? _pickNext() {
-    if (_storageFull) return null;
     final start = _currentIndex < 0 ? 0 : _currentIndex;
     for (var i = start; i < _items.length; i++) {
       if (_items[i].status == SentenceStatus.pending) return i;
@@ -564,17 +591,20 @@ class NarrationEngine extends ChangeNotifier {
     }
   }
 
-  /// 스물다섯 문장마다 한 번씩 총량을 재고, 상한에 닿으면 손을 놓는다.
+  /// 스물다섯 문장마다 한 번씩 총량을 재서, 상한을 넘었는지만 봐 둔다.
   /// 매번 재면 폴더를 훑는 값이 아까워 띄엄띄엄 잰다.
+  ///
+  /// 넘어도 만들기를 멈추지 않는다. 화면(PLAY)이 붉어질 뿐이다.
   Future<void> _checkStorage(int gen) async {
     if (++_madeSinceCheck < 25) return;
     _madeSinceCheck = 0;
     try {
       final bytes = await voiceBytes();
       if (gen != _generation) return;
-      if (bytes >= voiceLimitBytes) {
-        _storageFull = true;
-        _setStatus('저장공간이 가득 찼어요. 설정에서 정리해 주세요.');
+      final full = bytes >= voiceLimitBytes;
+      if (full != _voiceFull) {
+        _voiceFull = full;
+        notifyListeners();
       }
     } catch (_) {}
   }
@@ -712,6 +742,15 @@ class NarrationEngine extends ChangeNotifier {
   /// 자리를 옮기는 쪽에서 직접 불러 준다.
   void _markPlaying(int index) {
     if (index < 0 || index >= _items.length) return;
+
+    // 재생목록에 한 문장을 담을 때마다 재생기가 인덱스를 다시 알려 준다.
+    // 자리가 그대로면 157개를 훑고 화면을 다시 그릴 이유가 없다 —
+    // 한 번 건너뛸 때 이 알림이 서른 번 넘게 오기도 한다.
+    if (_currentIndex == index &&
+        _items[index].status == SentenceStatus.playing) {
+      _stalled = false;
+      return;
+    }
 
     for (var i = 0; i < _items.length; i++) {
       final it = _items[i];
@@ -886,48 +925,24 @@ class NarrationEngine extends ChangeNotifier {
 
   /// 앱을 켤 때 정리.
   ///
-  /// 목록에서 없어진 글의 음성은 통째로 버린다. **남아 있는 글의 음성은
-  /// 손대지 않는다** — 다시 들어갔을 때 곧바로 들리게 하려고 남겨두는 것이다.
+  /// **목록에서 없어진 글의 음성만 버린다.** 목록에 남아 있는 글의 음성은
+  /// 총량이 [voiceLimitBytes] 를 넘더라도 손대지 않는다 — 넘었다는 것은
+  /// [voiceFull] 로 알리기만 하고, 지울지 말지는 사람이 설정에서 정한다.
   ///
-  /// 다만 끝없이 늘 수는 없으므로 총량이 [voiceLimitBytes] 를 넘으면
-  /// [oldestFirst] 순서대로, 즉 오래전에 넣은 글부터 음성을 버린다.
-  /// [inUseSourceId] 는 지금 고른 글이라 마지막까지 남긴다.
-  static Future<void> pruneVoice({
-    required List<String> oldestFirst,
-    String? inUseSourceId,
-    int limitBytes = voiceLimitBytes,
-  }) async {
+  /// 단문으로 읽은 일회성 글은 목록에 없으므로 여기서 함께 없어진다.
+  /// 그게 일회성이라는 뜻이다.
+  static Future<void> pruneVoice({required List<String> liveIds}) async {
     try {
       await _sweepLegacyCache();
 
       final root = Directory(await _voiceRootPath());
       if (!root.existsSync()) return;
 
-      final live = oldestFirst.toSet();
-      final sizes = <String, int>{};
+      final live = liveIds.toSet();
       for (final entry in root.listSync()) {
         if (entry is! Directory) continue;
-        final id = entry.path.split('/').last;
-        if (!live.contains(id)) {
-          entry.deleteSync(recursive: true);
-          continue;
-        }
-        sizes[id] = _dirBytes(entry);
-      }
-
-      var total = sizes.values.fold<int>(0, (a, b) => a + b);
-      if (total <= limitBytes) return;
-
-      for (final id in oldestFirst) {
-        if (total <= limitBytes) break;
-        if (id == inUseSourceId) continue;
-        final bytes = sizes[id];
-        if (bytes == null || bytes == 0) continue;
-        try {
-          Directory('${root.path}/$id').deleteSync(recursive: true);
-          total -= bytes;
-          logger.i('음성 상한을 넘어 오래된 글의 음성을 버렸다: $id');
-        } catch (_) {}
+        if (live.contains(entry.path.split('/').last)) continue;
+        entry.deleteSync(recursive: true);
       }
     } catch (e, st) {
       logger.e('음성 폴더 정리 실패', error: e, stackTrace: st);
@@ -997,10 +1012,10 @@ class NarrationEngine extends ChangeNotifier {
     if (root.existsSync()) root.deleteSync(recursive: true);
   }
 
-  /// 저장공간을 비웠으니 다시 만들어도 된다고 알린다.
+  /// 저장공간을 비웠으니 붉은 표시를 거둔다.
   void resumeAfterCleanup() {
-    if (!_storageFull) return;
-    _storageFull = false;
+    if (!_voiceFull) return;
+    _voiceFull = false;
     _madeSinceCheck = 0;
     notifyListeners();
   }
@@ -1036,7 +1051,14 @@ class NarrationEngine extends ChangeNotifier {
   }
 
   @override
+  void notifyListeners() {
+    if (_disposed) return;
+    super.notifyListeners();
+  }
+
+  @override
   void dispose() {
+    _disposed = true;
     _generation++;
     _watchdog?.cancel();
     player.dispose();

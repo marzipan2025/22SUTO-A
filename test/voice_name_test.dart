@@ -24,6 +24,20 @@ void main() {
         isNot(NarrationEngine.voiceFileName(1, '가나닥', sig)));
   });
 
+  test('설정을 뺀 앞부분은 같은 문장이면 늘 같다 — 이것으로 짝을 찾는다', () {
+    // 목소리를 바꿔도 앞부분이 같으므로 이미 만들어 둔 것을 찾아 쓴다
+    final a = NarrationEngine.voiceFilePrefix(7, '문장');
+    final b = NarrationEngine.voiceFilePrefix(7, '문장');
+    expect(a, b);
+    expect(NarrationEngine.voiceFileName(7, '문장', 'F2|ko|1.00|6'),
+        startsWith('$a\_'));
+    expect(NarrationEngine.voiceFileName(7, '문장', 'M1|ko|1.50|2'),
+        startsWith('$a\_'));
+    // 문장이 다르면 앞부분도 다르다
+    expect(a, isNot(NarrationEngine.voiceFilePrefix(7, '다른 문장')));
+    expect(a, isNot(NarrationEngine.voiceFilePrefix(8, '문장')));
+  });
+
   test('설정이 바뀌면 이름이 다르다', () {
     final f2 = NarrationEngine.voiceFileName(1, '문장', 'F2|ko|1.00|6');
     expect(f2, isNot(NarrationEngine.voiceFileName(1, '문장', 'M1|ko|1.00|6')));

@@ -364,8 +364,9 @@ final kMadeOnYellow = Color.alphaBlend(kYellow.withValues(alpha: 0.7), kBg);
 /// 어디까지 만들었는지, 중간에 빠진 데가 있는지가 한눈에 보인다.
 ///
 /// 문장이 많아 한 줄에 다 못 놓으면 여러 문장을 한 칸에 묶는다. 묶은 칸은
-/// **그 안이 모두 채워졌을 때만** 켠다 — 덜 된 것을 다 된 것처럼 보이게
-/// 하느니 덜 보이는 편이 낫다.
+/// **그 안에 하나라도 있으면** 켠다. 전부 채워져야 켜지게 두었더니, 긴 글에
+/// 띄엄띄엄 만들어 둔 것이 한 칸도 켜지지 않아 아무것도 없는 것처럼 보였다.
+/// 어디쯤에 있는지를 보여 주는 것이 이 띠가 할 일이다.
 class MadeStrip extends StatelessWidget {
   const MadeStrip({
     super.key,
@@ -424,16 +425,16 @@ class _StripPainter extends CustomPainter {
       // 이 칸이 맡은 문장 구간
       final lo = k * flags.length ~/ n;
       final hi = (k + 1) * flags.length ~/ n;
-      var all = true;
+      var any = false;
       for (var i = lo; i < (hi > lo ? hi : lo + 1); i++) {
-        if (i >= flags.length || !flags[i]) {
-          all = false;
+        if (i < flags.length && flags[i]) {
+          any = true;
           break;
         }
       }
       canvas.drawRect(
         Rect.fromLTWH(k * (cell + gap), 0, cell, cell),
-        all ? lit : dark,
+        any ? lit : dark,
       );
     }
   }

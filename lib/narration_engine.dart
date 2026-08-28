@@ -272,6 +272,18 @@ class NarrationEngine extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// 지금 서 있는 자리가 아직 만들어지지 않아 기다리는 중인지.
+  ///
+  /// 기계에 실제로 올라간 문장은 [synthesizingIndex] 다 — 그건 다른 문장일
+  /// 수 있다. 한 번에 하나씩만 만들 수 있어서, 눌러서 옮겨 온 자리는 앞의
+  /// 것이 끝나야 차례가 온다. 그동안 이 자리를 '대기'로 보여 주면 눌러도
+  /// 아무 일이 없는 것처럼 보이므로, 만드는 중과 같은 얼굴로 세운다.
+  bool get isWaitingHere =>
+      _running &&
+      _currentIndex >= 0 &&
+      _currentIndex < _items.length &&
+      _items[_currentIndex].status == SentenceStatus.pending;
+
   /// 지금 위치의 음성 파일 경로 (앱을 끌 때 저장해 둘 값)
   String? get currentFilePath {
     if (_currentIndex < 0 || _currentIndex >= _items.length) return null;
@@ -329,6 +341,10 @@ class NarrationEngine extends ChangeNotifier {
     _stalled = true;
     _error = null;
     _warmOk = true; // 건너뛴 뒤에는 준비되는 대로 바로 재생
+
+    // 소리를 멈추기 전에 먼저 알린다. 멈추는 동안 화면이 옛 자리를 그대로
+    // 들고 있으면, 누른 것이 먹히지 않은 것처럼 보인다.
+    notifyListeners();
 
     try {
       await player.stop();
@@ -568,11 +584,43 @@ class NarrationEngine extends ChangeNotifier {
   ///   s0007_a1b2c3d4_e5f6a7b8.wav
   ///        └ 문장 번호  └ 글자   └ 설정
   ///
-  /// 설정이 이름에 들어가므로, 목소리나 속도를 바꾸면 다른 이름이 된다.
-  /// 전에 만든 것은 지우지 않고 그대로 두므로 되돌리면 다시 곧바로 들린다.
+  /// 설정도 이름에 담지만, **가져다 쓸지는 설정으로 가리지 않는다.**
+  /// 있으면 쓴다 — 목소리를 바꿨다고 이미 만들어 둔 것을 못 본 척하고
+  /// 처음부터 다시 만드는 것은 치르는 값이 너무 크다. 설정을 담아 두는 것은
+  /// 같은 문장의 여러 벌이 서로 덮어쓰지 않게 하고, 지금 설정으로 만든 것이
+  /// 있으면 그쪽을 먼저 고르기 위해서다.
   @visibleForTesting
   static String voiceFileName(int index, String text, String signature) =>
-      's${index.toString().padLeft(4, '0')}_${tag(text)}_${tag(signature)}.wav';
+      '${voiceFilePrefix(index, text)}_${tag(signature)}.wav';
+
+  /// 설정을 뺀 앞부분. 이것만 같으면 같은 문장의 음성이다.
+  @visibleForTesting
+  static String voiceFilePrefix(int index, String text) =>
+      's${index.toString().padLeft(4, '0')}_${tag(text)}';
+
+  /// 폴더에 있는 파일을 앞부분별로 모은다.
+  static Map<String, List<String>> _byPrefix(Directory dir) {
+    final out = <String, List<String>>{};
+    for (final f in dir.listSync()) {
+      if (f is! File) continue;
+      final name = f.path.split('/').last;
+      if (!name.endsWith('.wav')) continue;
+      final cut = name.lastIndexOf('_');
+      if (cut <= 0) continue;
+      out.putIfAbsent(name.substring(0, cut), () => []).add(name);
+    }
+    return out;
+  }
+
+  /// 그 문장에 쓸 파일 하나를 고른다.
+  /// 지금 설정으로 만든 것이 있으면 그것을, 없으면 아무거나 — 있으면 쓴다.
+  static String? _pickFileFor(
+      Map<String, List<String>> byPrefix, int i, String text, String sig) {
+    final names = byPrefix[voiceFilePrefix(i, text)];
+    if (names == null || names.isEmpty) return null;
+    final want = voiceFileName(i, text, sig);
+    return names.contains(want) ? want : names.first;
+  }
 
   /// 설정을 한 줄로. 소리에 영향을 주는 것만 넣는다.
   static String signatureOf({
@@ -670,10 +718,7 @@ class NarrationEngine extends ChangeNotifier {
   static Future<List<bool>> madeFlags({
     required String sourceId,
     required String text,
-    required String voice,
     required String langChoice,
-    required double speed,
-    required int steps,
   }) async {
     final cleaned = cleanText(text).trim();
     if (cleaned.isEmpty) return const [];
@@ -686,17 +731,13 @@ class NarrationEngine extends ChangeNotifier {
     final dir = Directory('${await _voiceRootPath()}/$sourceId');
     if (!dir.existsSync()) return List.filled(units.length, false);
 
-    final have = <String>{};
-    for (final f in dir.listSync()) {
-      if (f is File) have.add(f.path.split('/').last);
-    }
-    if (have.isEmpty) return List.filled(units.length, false);
+    final byPrefix = _byPrefix(dir);
+    if (byPrefix.isEmpty) return List.filled(units.length, false);
 
-    final sig = signatureOf(
-        voice: voice, lang: lang, speed: speed, steps: steps);
+    // 설정을 가리지 않는다 — 어떤 설정으로 만들었든 있으면 쓰기 때문이다
     return [
       for (var i = 0; i < units.length; i++)
-        have.contains(voiceFileName(i, units[i], sig)),
+        byPrefix.containsKey(voiceFilePrefix(i, units[i])),
     ];
   }
 

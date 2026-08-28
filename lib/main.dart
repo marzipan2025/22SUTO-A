@@ -254,10 +254,7 @@ class _TTSPageState extends State<TTSPage> with WidgetsBindingObserver {
       made[s.id] = await NarrationEngine.madeFlags(
         sourceId: s.id,
         text: s.text,
-        voice: _settings.voice,
         langChoice: _settings.lang,
-        speed: _settings.speed,
-        steps: _settings.steps,
       );
     }
     if (mounted) setState(() => _made = made);
@@ -1488,8 +1485,13 @@ class _TTSPageState extends State<TTSPage> with WidgetsBindingObserver {
               _extentFor(index, constraints.maxWidth),
           itemBuilder: (context, i) {
           final it = items[i];
+          // 눌러서 옮겨 온 자리가 아직 안 만들어졌으면, 앞의 것이 끝나기를
+          // 기다리는 동안에도 만드는 중과 같은 얼굴로 세운다. 그러지 않으면
+          // 눌러도 아무 일이 없는 것처럼 보인다.
+          final waiting = i == _engine.currentIndex && _engine.isWaitingHere;
+          final shown = waiting ? SentenceStatus.synthesizing : it.status;
           // 카드 색이 곧 상태다 — 어두운 데서 시작해 밝아졌다가 다시 가라앉는다
-          final skin = skinFor(it.status);
+          final skin = skinFor(shown);
 
           return Padding(
             padding: const EdgeInsets.only(bottom: _itemGap),
@@ -1507,7 +1509,7 @@ class _TTSPageState extends State<TTSPage> with WidgetsBindingObserver {
                 children: [
                   Padding(
                     padding: const EdgeInsets.only(top: 3),
-                    child: StatusIcon(it.status,
+                    child: StatusIcon(shown,
                         color: skin.ink, cell: _iconCell),
                   ),
                   const SizedBox(width: _iconGap),

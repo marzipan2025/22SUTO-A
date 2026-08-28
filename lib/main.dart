@@ -155,6 +155,13 @@ class _TTSPageState extends State<TTSPage> with WidgetsBindingObserver {
   /// 멈춘 뒤 이만큼은 탭을 받지 않는다
   static const _tapDeadZone = Duration(milliseconds: 350);
 
+  /// 우리가 스스로 목록을 옮기는 중인지.
+  ///
+  /// 이 자리가 없으면 자동 스크롤이 낸 알림까지 '손으로 굴렸다' 로 세어,
+  /// 문장이 넘어갈 때마다 350ms 동안 탭이 통째로 삼켜진다. 읽는 내내
+  /// 목록이 저 혼자 움직이므로, 사실상 문장을 눌러도 반응이 없다.
+  bool _autoScrolling = false;
+
   // ---- 머리글 ----
   /// 두 화면이 같은 높이를 쓴다. 설정 단추(36dp)에 위아래 여백을 더한 값이라,
   /// 이름표든 상태든 그 안에서 가운데로 선다.
@@ -882,15 +889,20 @@ class _TTSPageState extends State<TTSPage> with WidgetsBindingObserver {
         .clamp(0.0, _listController.position.maxScrollExtent);
     try {
       if (animate) {
-        _listController.animateTo(
-          target,
-          duration: const Duration(milliseconds: 350),
-          curve: Curves.easeOut,
-        );
+        _autoScrolling = true;
+        _listController
+            .animateTo(
+              target,
+              duration: const Duration(milliseconds: 350),
+              curve: Curves.easeOut,
+            )
+            .whenComplete(() => _autoScrolling = false);
       } else {
         // 들어오자마자는 곧장 앉힌다. 맨 위에서부터 훑어 내려가는 것을
         // 보여 줄 이유가 없다.
+        _autoScrolling = true;
         _listController.jumpTo(target);
+        _autoScrolling = false;
       }
       _lastScrolledIndex = i;
     } catch (e) {
@@ -931,8 +943,11 @@ class _TTSPageState extends State<TTSPage> with WidgetsBindingObserver {
   }
 
   bool _onScrollNotification(ScrollNotification n) {
-    // 굴러가는 동안(손으로 끌든 튕겨서 흐르든) 계속 찍어 둔다
-    if (n is ScrollUpdateNotification) _listMovedAt = DateTime.now();
+    // 손으로 굴리는 동안만 찍어 둔다. 자동 스크롤은 세지 않는다 —
+    // 세우려고 짚은 손짓만 걸러내자는 장치이기 때문이다.
+    if (n is ScrollUpdateNotification && !_autoScrolling) {
+      _listMovedAt = DateTime.now();
+    }
     if (n is! UserScrollNotification) return false;
     if (n.direction != ScrollDirection.idle) {
       _userScrolling = true;

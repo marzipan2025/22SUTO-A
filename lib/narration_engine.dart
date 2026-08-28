@@ -223,7 +223,7 @@ class NarrationEngine extends ChangeNotifier {
     _watchdog?.cancel();
     _watchdog = Timer.periodic(const Duration(seconds: 2), (_) => _kickIfIdle());
 
-    player.currentIndexStream.listen(_onPlayerIndex);
+    player.sequenceStateStream.listen(_onSequenceState);
     player.processingStateStream.listen((s) {
       if (s != ProcessingState.completed) return;
       if (_playlistEnd >= _items.length) {
@@ -458,8 +458,10 @@ class NarrationEngine extends ChangeNotifier {
   /// 설정과 맞는 것' 을 먼저 고른다. 그러면 애써 다시 만든 것이 묻힌다.
   /// 하나만 남겨 두어야 다시 만든 것이 그대로 유지된다.
   ///
-  /// 만든 뒤에는 그 문장부터 다시 들려준다 — 다시 만들라고 이른 사람이
-  /// 가장 먼저 궁금한 것이 그 문장의 소리다.
+  /// **듣던 흐름은 건드리지 않는다.** 자리를 옮기지도, 지금 나는 소리를
+  /// 끊지도 않는다. 다시 만든 음성은 그 문장의 차례가 올 때 들린다.
+  /// 지금 듣고 있는 문장을 다시 만들라고 이르면, 이번 한 번은 옛 소리로
+  /// 끝까지 가고 새 것은 다음 차례부터 쓰인다.
   Future<void> remake(
     int index, {
     required String voice,
@@ -488,9 +490,23 @@ class NarrationEngine extends ChangeNotifier {
     item.filePath = null;
     item.voice = null;
     item.status = SentenceStatus.pending;
+    notifyListeners();
 
-    // 그 자리로 옮기면 대기열이 다시 짜이고, 만들어지는 대로 들린다
-    await seekToUnit(index);
+    // 이미 재생기에 담아 둔 문장이면 방금 지운 파일을 가리키고 있다.
+    // 지금 듣고 있는 것만 남기고 그 뒤를 비워, 소리는 이어지면서
+    // 대기열만 새로 채워지게 한다.
+    await _withPlaylist(() async {
+      final at = player.currentIndex;
+      if (at == null || at + 1 >= _playlistMap.length) return;
+      try {
+        await player.removeAudioSourceRange(at + 1, _playlistMap.length);
+        _playlistMap.removeRange(at + 1, _playlistMap.length);
+        _playlistEnd = _playlistMap.last + 1;
+      } catch (e, st) {
+        logger.e('대기열 비우기 실패', error: e, stackTrace: st);
+      }
+    });
+    unawaited(_pump(_generation));
   }
 
   /// 지정한 문장부터 다시 읽는다. 그 뒤 문장들도 필요하면 새로 합성한다.
@@ -566,6 +582,14 @@ class NarrationEngine extends ChangeNotifier {
   /// 그 사이사이의 빈 자리가 영영 채워지지 않는다.
   /// 저장공간이 차도 멈추지 않는다 — 넘었다는 것은 [voiceFull] 로 알리기만 한다.
   int? _pickNext() {
+    // 손으로 다시 만들라고 이른 문장이 먼저다. 지금 듣는 자리보다 뒤에
+    // 있어도 만든다 — 아래 훑기는 지금 자리부터라 그냥 두면 영영 지나친다.
+    for (var i = 0; i < _items.length; i++) {
+      final it = _items[i];
+      if (it.forceVoice != null && it.status == SentenceStatus.pending) {
+        return i;
+      }
+    }
     final start = _currentIndex < 0 ? 0 : _currentIndex;
     for (var i = start; i < _items.length; i++) {
       if (_items[i].status == SentenceStatus.pending) return i;
@@ -784,13 +808,22 @@ class NarrationEngine extends ChangeNotifier {
   }
 
   // ------------------------------------------------------------- 재생 추적
-  void _onPlayerIndex(int? playlistIndex) {
-    if (playlistIndex == null ||
-        playlistIndex < 0 ||
-        playlistIndex >= _playlistMap.length) {
-      return;
-    }
-    _markPlaying(_playlistMap[playlistIndex]);
+  /// 재생기가 '지금 몇 번째 곡' 이라고 알려 올 때.
+  ///
+  /// 자리 번호만 따로 듣지 않고 **재생목록과 한 묶음으로** 받는다.
+  /// 자리를 옮기면 목록을 비우고 새로 담는데, 그 사이에 옛 목록을 가리키는
+  /// 알림이 뒤늦게 날아온다. 번호만 보면 그것이 새 목록의 엉뚱한 자리에
+  /// 꽂혀, 방금 누른 문장 대신 한참 앞의 문장으로 뛰어 버린다.
+  ///
+  /// 재생기가 든 곡 수가 우리 번호표([_playlistMap])의 길이와 다르면
+  /// 갈아 끼우는 중이라는 뜻이므로 흘려보낸다. 담고 비우는 쪽이 늘
+  /// 번호표를 먼저 고치므로, 길이가 같다는 것은 곧 같은 목록을 보고
+  /// 있다는 뜻이다.
+  void _onSequenceState(SequenceState state) {
+    if (state.sequence.length != _playlistMap.length) return;
+    final at = state.currentIndex;
+    if (at == null || at < 0 || at >= _playlistMap.length) return;
+    _markPlaying(_playlistMap[at]);
   }
 
   /// 지금 읽고 있는 문장을 화면에 반영한다.

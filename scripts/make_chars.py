@@ -25,6 +25,7 @@ from make_icons import BPP, read_png, write_png  # noqa: E402
 
 ROOT = Path(__file__).resolve().parent.parent
 DST = ROOT / 'assets/char'
+FULL = ROOT / 'assets/char/full'
 SHRINK = 8  # 3072px 밑그림 → 앱에 들어가는 크기
 
 
@@ -67,13 +68,26 @@ def main():
         raise SystemExit(f'PNG 가 없다: {src}')
 
     DST.mkdir(parents=True, exist_ok=True)
+    FULL.mkdir(parents=True, exist_ok=True)
     for f in files:
         w, h, px = read_png(f)
+
+        # 1) 잘라낸 판 — 설정·REMAKE 의 얼굴 고르개용.
+        #    거기서는 얼굴 사이 빈틈을 고르게 맞춰야 해서, 보이는 폭이
+        #    곧 그림의 폭이어야 한다.
         box = content_box(px, w, h)
         out, ow, oh = crop_shrink(px, w, box, SHRINK)
         write_png(DST / f.name, out, ow, oh)
-        print(f'  {f.name}  {w}x{h} → 잘라 {box[2]}x{box[3]} → {ow}x{oh}'
-              f'  (세로/가로 {oh / ow:.3f})')
+
+        # 2) 안 자른 판 — 화면 아래에 서는 캐릭터용.
+        #    밑그림은 모두 같은 캔버스(3072)에 그려져 있고 안쪽 여백만
+        #    다르다. 그 캔버스째로 줄이면 캐릭터끼리 크기가 저절로
+        #    맞는다. 잘라내면 그 공통 기준이 사라져 손잡이 하나로는
+        #    크기를 맞출 수 없다.
+        full, fw, fh = crop_shrink(px, w, (0, 0, w, h), SHRINK)
+        write_png(FULL / f.name, full, fw, fh)
+
+        print(f'  {f.name}  {w}x{h} → 잘라 {ow}x{oh} · 통째로 {fw}x{fh}')
 
 
 if __name__ == '__main__':

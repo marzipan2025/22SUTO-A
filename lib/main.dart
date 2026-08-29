@@ -157,8 +157,7 @@ class _TTSPageState extends State<TTSPage> with WidgetsBindingObserver {
   /// 멈춘 뒤 이만큼은 탭을 받지 않는다
   static const _tapDeadZone = Duration(milliseconds: 350);
 
-  /// 입력칸 한 줄의 키. 아래 [_shortInputBlock] 이 같은 값으로 자리를
-  /// 비워 두므로, 둘이 어긋나면 단추판이 위아래로 흔들린다.
+  /// 입력칸 한 줄의 키. 글자 높이에 따라 흔들리지 않게 못 박아 둔다.
   static const _inputRowHeight = 50.0;
 
   /// 우리가 스스로 목록을 옮기는 중인지.
@@ -229,13 +228,17 @@ class _TTSPageState extends State<TTSPage> with WidgetsBindingObserver {
     'F4': 'new_f_04', 'F5': 'new_f_05',
   };
 
-  /// 얼굴의 폭. 그림에서 투명한 가장자리를 모두 잘라내 두었으므로
-  /// 이 값이 곧 보이는 얼굴의 폭이다. 높이는 그림마다 다르다.
+  /// 화면 아래에 서는 캐릭터의 크기.
   ///
-  /// 120 에서 114 로 줄였다. 크기를 정하는 손잡이가 폭 하나뿐이라 높이는
-  /// 그림의 세로/가로 비를 타고 함께 줄어든다 — 남자 캐릭터들의 비가
-  /// 1.21~1.47 이므로 높이가 7.3~8.8dp 줄어든다. 비례는 그대로다.
-  static const _faceWidth = 114.0;
+  /// **잘라내지 않은 판**(assets/char/full)을 쓴다. 밑그림은 모두 같은
+  /// 캔버스(3072 정사각형)에 그려져 있고 안쪽 여백만 다르므로, 그
+  /// 캔버스째로 놓으면 캐릭터끼리 크기가 저절로 맞는다. 손잡이도 하나면
+  /// 된다 — 캔버스가 정사각형이라 이 값이 곧 폭이자 키다.
+  ///
+  /// 잘라낸 판은 설정·REMAKE 의 얼굴 고르개가 쓴다. 거기서는 얼굴 사이
+  /// 빈틈을 고르게 맞춰야 해서 보이는 폭이 곧 그림의 폭이어야 한다.
+  /// 두 자리의 사정이 서로 다르다.
+  static const _faceCanvas = 144.0;
 
   /// 화면 바깥 여백 (Column 의 좌우 안쪽 여백)
   static const _pagePad = 16.0;
@@ -245,9 +248,15 @@ class _TTSPageState extends State<TTSPage> with WidgetsBindingObserver {
   /// 지금 들리는 음성을 만든 목소리를 따른다 — 설정을 바꿔도 이미 만들어
   /// 둔 것은 그대로 쓰므로, 설정만 보면 들리는 것과 어긋난다.
   /// 아직 아무것도 재생하지 않았으면 설정의 목소리를 보여 준다.
-  String? get _faceAsset {
+  /// [pressed] 면 누른 자세 그림을 가리킨다.
+  ///
+  /// 누름 그림은 폭이 원본과 같고 키만 낮다(225x330 → 225x210). 발을
+  /// 바닥에 붙여 두므로, 옅게 만드는 대신 이 그림으로 갈아 끼우면
+  /// 웅크리는 모습이 된다.
+  String? _faceAsset({bool pressed = false}) {
     final name = _voiceFaces[_engine.playingVoice ?? _settings.voice];
-    return name == null ? null : 'assets/char/$name.png';
+    if (name == null) return null;
+    return 'assets/char/full/$name${pressed ? '_press' : ''}.png';
   }
 
   /// 목소리마다 이름 하나. 얼굴 아래에 표시어(Panchang)로 적히므로
@@ -1556,7 +1565,10 @@ class _TTSPageState extends State<TTSPage> with WidgetsBindingObserver {
               // Column 이라 덜어낸 만큼 위의 Expanded 가 늘어날 뿐,
               // 타임라인과 아래 단추는 있던 자리에 그대로 있는다.
               SizedBox(height: _showList ? 7 : 10),
-              if (!_showList) _shortInputBlock(),
+              if (!_showList) ...[
+                _shortInputRow(),
+                const SizedBox(height: 12),
+              ],
               if (_showList && _engine.items.isNotEmpty) ...[
                 // 타임라인. 목록 카드의 띠와 같은 얼굴이되, 여기서는 눌러서
                 // 그 자리로 갈 수 있다.
@@ -1575,7 +1587,7 @@ class _TTSPageState extends State<TTSPage> with WidgetsBindingObserver {
                 ),
                 const SizedBox(height: 4),
               ],
-              if (_showList) _controls(),
+              _controls(),
               const SizedBox(height: 6),
               Text(
                 _bottomLine,
@@ -1923,45 +1935,6 @@ class _TTSPageState extends State<TTSPage> with WidgetsBindingObserver {
   ///
   /// 안내 문구는 두지 않는다. 빈 칸으로 두면 캐릭터가 그 위에 서 있어도
   /// 글자와 겹쳐 어수선해 보이지 않는다.
-  /// 입력칸 · 여백 · 아래 단추판을 한 덩이로 묶는다.
-  ///
-  /// 자리는 세로로 나란히 잡되, **그리는 순서만** 커서에 따라 뒤집는다.
-  /// 얼굴은 단추판에서 위로 솟아 입력칸을 덮는데, 커서가 들어오면 글을
-  /// 쓰는 자리가 가려지면 안 되기 때문이다. 자리를 바꾸는 게 아니라
-  /// 층만 바꾸므로 아무것도 움직이지 않는다.
-  ///
-  /// 두 아이에 키를 달아 두었다. 순서가 바뀌어도 같은 것으로 알아보아야
-  /// 입력칸이 다시 만들어지지 않는다 — 다시 만들어지면 커서가 빠진다.
-  Widget _shortInputBlock() {
-    const inputKey = ValueKey('short-input');
-    const restKey = ValueKey('short-rest');
-
-    final input = Positioned(
-      key: inputKey,
-      top: 0,
-      left: 0,
-      right: 0,
-      child: _shortInputRow(),
-    );
-    final rest = Column(
-      key: restKey,
-      mainAxisSize: MainAxisSize.min,
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        // 입력칸이 설 자리만 비워 둔다 (입력칸 자신은 위에 얹힌다)
-        const SizedBox(height: _inputRowHeight),
-        const SizedBox(height: 12),
-        _controls(),
-      ],
-    );
-
-    return Stack(
-      // 얼굴이 단추판 밖으로 솟는다
-      clipBehavior: Clip.none,
-      children: _shortFocused ? [rest, input] : [input, rest],
-    );
-  }
-
   Widget _shortInputRow() {
     return SizedBox(
       height: _inputRowHeight,
@@ -2290,15 +2263,14 @@ class _TTSPageState extends State<TTSPage> with WidgetsBindingObserver {
   /// 위쪽 목록을 가리는데, 그러라고 맨 나중에 그린다.
   /// 단추는 오른쪽에 서므로 얼굴과 겹치지 않는다.
   Widget _controlBox(Widget child) {
-    final face = _faceAsset;
+    // 누를 때·타임라인을 만질 때·인풋칸에 커서가 들어왔을 때 모두
+    // 숙인 그림으로 갈아 끼운다. 숙이면 키가 낮아져 인풋칸 아래로
+    // 내려가므로, 층을 뒤집거나 잘라낼 일이 없다.
+    final pressed = _facePressed || _scrubTouching || _shortFocused;
+    final face = _faceAsset(pressed: pressed);
     return Stack(
-      // 평소에는 얼굴이 판 밖으로 솟는다.
-      //
-      // 커서가 들어오면 판 안쪽으로 잘라 낸다. 그러지 않으면 입력칸과
-      // 판 사이의 검은 틈에 얼굴의 목덜미만 동떨어져 남는다 — 입력칸이
-      // 위를 덮고 있어 머리는 가려지는데 그 아래는 그대로이기 때문이다.
-      // 자르는 자리가 곧 판의 흰 면이라, 얼굴이 판 위에 얹힌 것처럼 된다.
-      clipBehavior: _shortFocused ? Clip.hardEdge : Clip.none,
+      // 얼굴이 판 밖으로 솟는 것을 자르지 않는다
+      clipBehavior: Clip.none,
       alignment: Alignment.bottomLeft,
       children: [
         PixelCard(
@@ -2309,9 +2281,9 @@ class _TTSPageState extends State<TTSPage> with WidgetsBindingObserver {
         if (face != null)
           Positioned(
             bottom: 0,
-            // 왼쪽 끝에 딱 붙으면 판의 모서리 계단과 얼굴선이 맞물려
-            // 답답해 보인다. 14dp 띄운다.
-            left: 14,
+            // 캔버스째 놓으므로 그림 안쪽에도 여백이 있다. 그만큼 왼쪽으로
+            // 더 내보내 화면 가장자리에 붙였다 (14 에서 24dp 왼쪽).
+            left: -10,
             // 눌러도 하는 일은 없다. 손끝을 따라 옅어졌다 돌아오는 것이
             // 전부다 — 눌리는 것이라는 표시.
             child: GestureDetector(
@@ -2319,19 +2291,14 @@ class _TTSPageState extends State<TTSPage> with WidgetsBindingObserver {
               onTapDown: (_) => _setFacePressed(true),
               onTapUp: (_) => _setFacePressed(false),
               onTapCancel: () => _setFacePressed(false),
-              // 타임라인을 만지는 동안에도, 키패드가 올라와도 옅어진다
-              child: AnimatedOpacity(
-                // 인풋칸에 커서가 들어와도 옅어지지 않는다 — 대신
-                // 인풋칸이 얼굴 위로 올라온다 (_shortInputBlock).
-                opacity: _facePressed || _scrubTouching ? 0.3 : 1,
-                duration: const Duration(milliseconds: 120),
-                child: Image.asset(
-                  face,
-                  width: _faceWidth,
-                  // 픽셀 그림이라 매끄럽게 늘이면 뭉갠다
-                  filterQuality: FilterQuality.none,
-                  isAntiAlias: false,
-                ),
+              // 누르는 동안(타임라인을 만질 때도) 옅게 만드는 대신
+              // 누른 자세 그림으로 갈아 끼운다.
+              child: Image.asset(
+                face,
+                width: _faceCanvas,
+                // 픽셀 그림이라 매끄럽게 늘이면 뭉갠다
+                filterQuality: FilterQuality.none,
+                isAntiAlias: false,
               ),
             ),
           ),

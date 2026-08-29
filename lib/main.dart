@@ -523,35 +523,27 @@ class _TTSPageState extends State<TTSPage> with WidgetsBindingObserver {
       _showToast('만들어둔 음성을 지웠어요');
     }
 
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Row(
-          children: [
-            Text('STORAGE', style: _sheetTitle),
-            const Spacer(),
-            if (bytes != null && bytes > 0)
-              _pixelTap(
-                onTap: clear,
-                padding: const EdgeInsets.symmetric(horizontal: 2, vertical: 4),
-                child: Text('ERASE', style: _sheetAction),
-              ),
-          ],
-        ),
-        const SizedBox(height: 2),
-        _sheetLine(Text(
-          bytes == null
-              ? 'MEASURING'
-              : '${_mb(bytes)} / ${_mb(NarrationEngine.voiceLimitBytes)}',
-          // 넘어도 지우거나 멈추지 않는다. PLAY 와 같은 붉은색으로 여기서도
-          // 알리고, 지울지 말지는 사람이 정한다.
-          style: bytes == null
-              ? _sheetValue.copyWith(color: kMuted)
-              : (_engine.voiceFull
-                  ? _sheetValue.copyWith(color: kRed)
-                  : _sheetValue),
-        )),
-      ],
+    return _sheetOption(
+      title: 'STORAGE',
+      action: (bytes != null && bytes > 0)
+          ? _pixelTap(
+              onTap: clear,
+              padding: const EdgeInsets.symmetric(horizontal: 2, vertical: 4),
+              child: Text('ERASE', style: _sheetAction),
+            )
+          : null,
+      body: _sheetLine(Text(
+        bytes == null
+            ? 'MEASURING'
+            : '${_mb(bytes)} / ${_mb(NarrationEngine.voiceLimitBytes)}',
+        // 넘어도 지우거나 멈추지 않는다. PLAY 와 같은 붉은색으로 여기서도
+        // 알리고, 지울지 말지는 사람이 정한다.
+        style: bytes == null
+            ? _sheetValue.copyWith(color: kMuted)
+            : (_engine.voiceFull
+                ? _sheetValue.copyWith(color: kRed)
+                : _sheetValue),
+      )),
     );
   }
 
@@ -613,29 +605,22 @@ class _TTSPageState extends State<TTSPage> with WidgetsBindingObserver {
       redraw();
     }
 
-    final rows = <Widget>[
-      Row(
-        children: [
-          Text('UPDATE', style: _sheetTitle),
-          const Spacer(),
-          // 받는 중에는 '중지' 가 '확인' 자리를 대신한다. 게이지 아래가
-          // 아니라 여기여야 왼쪽 칸의 '지우기' 와 한 줄로 선다.
-          if (_downloading != null)
-            _pixelTap(
-              onTap: () => _downloadCancel?.cancel(),
-              padding: const EdgeInsets.symmetric(horizontal: 2, vertical: 4),
-              child: Text('STOP', style: _sheetAction),
-            )
-          else if (_downloaded == null)
-            _pixelTap(
-              onTap: check,
-              padding: const EdgeInsets.symmetric(horizontal: 2, vertical: 4),
-              child: Text('CHECK', style: _sheetAction),
-            ),
-        ],
-      ),
-      const SizedBox(height: 2),
-    ];
+    // 받는 중에는 '중지' 가 '확인' 자리를 대신한다
+    final Widget? action = _downloading != null
+        ? _pixelTap(
+            onTap: () => _downloadCancel?.cancel(),
+            padding: const EdgeInsets.symmetric(horizontal: 2, vertical: 4),
+            child: Text('STOP', style: _sheetAction),
+          )
+        : (_downloaded == null
+            ? _pixelTap(
+                onTap: check,
+                padding: const EdgeInsets.symmetric(horizontal: 2, vertical: 4),
+                child: Text('CHECK', style: _sheetAction),
+              )
+            : null);
+
+    final rows = <Widget>[];
 
     final status = _update;
     final downloading = _downloading;
@@ -679,7 +664,8 @@ class _TTSPageState extends State<TTSPage> with WidgetsBindingObserver {
       rows.add(_sheetLine(
           Text('CHECKING', style: _sheetValue.copyWith(color: kMuted))));
     } else if (status is UpToDate) {
-      rows.add(_sheetLine(Text('UP TO DATE', style: _sheetValue)));
+      // 평소 표기는 지금 깔린 버전 숫자다
+      rows.add(_sheetLine(Text('v ${status.current}', style: _sheetValue)));
     } else if (status is UpdateAvailable) {
       rows.addAll([
         _sheetLine(Text(
@@ -720,7 +706,18 @@ class _TTSPageState extends State<TTSPage> with WidgetsBindingObserver {
       ]);
     }
 
-    return Column(crossAxisAlignment: CrossAxisAlignment.start, children: rows);
+    return _sheetOption(
+      title: 'UPDATE',
+      action: action,
+      // 받는 동안 게이지와 숫자로 자란다. 평소에는 아래가 비어 있고,
+      // 그 자리로 자라므로 시트 높이는 그대로다.
+      lines: 2.5,
+      body: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisSize: MainAxisSize.min,
+        children: rows,
+      ),
+    );
   }
 
   /// 설정 시트 아래 두 칸이 같은 결로 보이게 묶어 둔 글자 모양
@@ -742,6 +739,39 @@ class _TTSPageState extends State<TTSPage> with WidgetsBindingObserver {
 
   /// 그 줄에 쓰는 게이지의 높이
   static const _sheetGauge = 10.0;
+
+  /// 설정 시트 아래쪽의 옵션 한 칸 — 제목·곁단추가 한 줄, 그 아래가 내용.
+  ///
+  /// 내용 자리의 높이를 [lines] 줄로 못 박는다. 업데이트는 받는 동안
+  /// 게이지와 숫자로 자라는데, 그때마다 시트가 출렁이면 눌러야 할 것이
+  /// 자꾸 움직인다. 평소에는 아래가 비어 있다가 필요할 때 그리로 자란다.
+  ///
+  /// 옵션이 더 늘어도 이 틀에 한 줄 얹으면 된다.
+  Widget _sheetOption({
+    required String title,
+    required Widget body,
+    Widget? action,
+    double lines = 1,
+  }) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          children: [
+            Text(title, style: _sheetTitle),
+            const Spacer(),
+            if (action != null) action,
+          ],
+        ),
+        const SizedBox(height: 2),
+        SizedBox(
+          height: _sheetBodyLine * lines,
+          width: double.infinity,
+          child: Align(alignment: Alignment.topLeft, child: body),
+        ),
+      ],
+    );
+  }
 
   /// 첫 줄에 놓는다 — 높이를 고정하고 세로 가운데에 세운다
   static Widget _sheetLine(Widget child) => SizedBox(
@@ -1476,15 +1506,13 @@ class _TTSPageState extends State<TTSPage> with WidgetsBindingObserver {
                 // 둘 다 짧아서 나란히 놓아도 넉넉하다
                 if (footer != null)
                   footer(ctx)
-                else
-                  Row(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Expanded(child: _voiceRow(setSheet)),
-                      const SizedBox(width: 18),
-                      Expanded(child: _updateRow(setSheet)),
-                    ],
-                  ),
+                else ...[
+                  // 나란히 놓으면 둘 다 폭이 좁아 값이 구겨진다.
+                  // 위아래로 두고 각자 한 줄을 온전히 쓴다.
+                  _voiceRow(setSheet),
+                  const SizedBox(height: 14),
+                  _updateRow(setSheet),
+                ],
               ],
             ),
           );

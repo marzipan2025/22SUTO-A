@@ -46,7 +46,21 @@ class StatusIcon extends StatefulWidget {
 
 class _StatusIconState extends State<StatusIcon>
     with SingleTickerProviderStateMixin {
-  AnimationController? _controller;
+  /// 깜박임을 도맡는 시계. **State 가 사는 동안 하나뿐이다.**
+  ///
+  /// 전에는 '만드는 중' 이 끝나면 버리고 다시 시작할 때 새로 만들었다.
+  /// 그런데 SingleTickerProviderStateMixin 은 한 State 에 시계를 하나만
+  /// 허락한다 — 두 번째로 만드는 순간 단언이 터진다.
+  ///
+  /// 목록은 셀을 재활용한다. 같은 State 가 스크롤을 따라 여러 문장을
+  /// 번갈아 맡으므로, '만드는 중' 을 두 번째로 만나는 일이 예사다.
+  /// 긴 글을 합성하며 훑어 내리면 곧 걸리고, 그 셀 하나만 빨갛게 죽었다.
+  ///
+  /// 이제는 만들지도 버리지도 않고 **켜고 끄기만** 한다.
+  late final AnimationController _controller = AnimationController(
+    vsync: this,
+    duration: const Duration(milliseconds: 900),
+  );
 
   bool get _animated => widget.status == SentenceStatus.synthesizing;
 
@@ -64,19 +78,16 @@ class _StatusIconState extends State<StatusIcon>
 
   void _sync() {
     if (_animated) {
-      _controller ??= AnimationController(
-        vsync: this,
-        duration: const Duration(milliseconds: 900),
-      )..repeat(reverse: true);
+      if (!_controller.isAnimating) _controller.repeat(reverse: true);
     } else {
-      _controller?.dispose();
-      _controller = null;
+      _controller.stop();
+      _controller.value = 1; // 멈춘 뒤에는 또렷하게 둔다
     }
   }
 
   @override
   void dispose() {
-    _controller?.dispose();
+    _controller.dispose();
     super.dispose();
   }
 
@@ -108,10 +119,10 @@ class _StatusIconState extends State<StatusIcon>
       child: Align(alignment: Alignment.centerLeft, child: icon),
     );
 
-    if (_controller == null) return boxed;
+    if (!_animated) return boxed;
     // 만드는 중일 때만 천천히 깜박인다
     return FadeTransition(
-      opacity: Tween<double>(begin: 0.35, end: 1.0).animate(_controller!),
+      opacity: Tween<double>(begin: 0.35, end: 1.0).animate(_controller),
       child: boxed,
     );
   }

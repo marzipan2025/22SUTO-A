@@ -155,6 +155,10 @@ class _TTSPageState extends State<TTSPage> with WidgetsBindingObserver {
   /// 멈춘 뒤 이만큼은 탭을 받지 않는다
   static const _tapDeadZone = Duration(milliseconds: 350);
 
+  /// 입력칸 한 줄의 키. 아래 [_shortInputBlock] 이 같은 값으로 자리를
+  /// 비워 두므로, 둘이 어긋나면 단추판이 위아래로 흔들린다.
+  static const _inputRowHeight = 50.0;
+
   /// 우리가 스스로 목록을 옮기는 중인지.
   ///
   /// 이 자리가 없으면 자동 스크롤이 낸 알림까지 '손으로 굴렸다' 로 세어,
@@ -1519,10 +1523,7 @@ class _TTSPageState extends State<TTSPage> with WidgetsBindingObserver {
               // Column 이라 덜어낸 만큼 위의 Expanded 가 늘어날 뿐,
               // 타임라인과 아래 단추는 있던 자리에 그대로 있는다.
               SizedBox(height: _showList ? 7 : 10),
-              if (!_showList) ...[
-                _shortInputRow(),
-                const SizedBox(height: 12),
-              ],
+              if (!_showList) _shortInputBlock(),
               if (_showList && _engine.items.isNotEmpty) ...[
                 // 타임라인. 목록 카드의 띠와 같은 얼굴이되, 여기서는 눌러서
                 // 그 자리로 갈 수 있다.
@@ -1541,7 +1542,7 @@ class _TTSPageState extends State<TTSPage> with WidgetsBindingObserver {
                 ),
                 const SizedBox(height: 4),
               ],
-              _controls(),
+              if (_showList) _controls(),
               const SizedBox(height: 6),
               Text(
                 _bottomLine,
@@ -1889,8 +1890,49 @@ class _TTSPageState extends State<TTSPage> with WidgetsBindingObserver {
   ///
   /// 안내 문구는 두지 않는다. 빈 칸으로 두면 캐릭터가 그 위에 서 있어도
   /// 글자와 겹쳐 어수선해 보이지 않는다.
+  /// 입력칸 · 여백 · 아래 단추판을 한 덩이로 묶는다.
+  ///
+  /// 자리는 세로로 나란히 잡되, **그리는 순서만** 커서에 따라 뒤집는다.
+  /// 얼굴은 단추판에서 위로 솟아 입력칸을 덮는데, 커서가 들어오면 글을
+  /// 쓰는 자리가 가려지면 안 되기 때문이다. 자리를 바꾸는 게 아니라
+  /// 층만 바꾸므로 아무것도 움직이지 않는다.
+  ///
+  /// 두 아이에 키를 달아 두었다. 순서가 바뀌어도 같은 것으로 알아보아야
+  /// 입력칸이 다시 만들어지지 않는다 — 다시 만들어지면 커서가 빠진다.
+  Widget _shortInputBlock() {
+    const inputKey = ValueKey('short-input');
+    const restKey = ValueKey('short-rest');
+
+    final input = Positioned(
+      key: inputKey,
+      top: 0,
+      left: 0,
+      right: 0,
+      child: _shortInputRow(),
+    );
+    final rest = Column(
+      key: restKey,
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        // 입력칸이 설 자리만 비워 둔다 (입력칸 자신은 위에 얹힌다)
+        const SizedBox(height: _inputRowHeight),
+        const SizedBox(height: 12),
+        _controls(),
+      ],
+    );
+
+    return Stack(
+      // 얼굴이 단추판 밖으로 솟는다
+      clipBehavior: Clip.none,
+      children: _shortFocused ? [rest, input] : [input, rest],
+    );
+  }
+
   Widget _shortInputRow() {
-    return Row(
+    return SizedBox(
+      height: _inputRowHeight,
+      child: Row(
       children: [
         Expanded(
           child: PixelCard(
@@ -1948,25 +1990,40 @@ class _TTSPageState extends State<TTSPage> with WidgetsBindingObserver {
             ),
           ),
         ),
-        if (_sources.isNotEmpty) ...[
-          const SizedBox(width: 8),
-          _glyphButton(
-            glyph: kGlyphPaste,
-            fill: kSlate,
-            cell: _iconCell,
-            size: const Size(46, 46),
-            onPressed: _pasteFromClipboard,
+        // 커서가 들어오면 두 단추가 오른쪽으로 밀려나며 접히고, 그 자리를
+        // 입력칸이 넘겨받는다. 폭을 0 으로 좁히는 것이라 Expanded 인
+        // 입력칸이 저절로 그만큼 늘어난다.
+        if (_sources.isNotEmpty)
+          ClipRect(
+            child: AnimatedAlign(
+              alignment: Alignment.centerRight,
+              widthFactor: _shortFocused ? 0 : 1,
+              duration: const Duration(milliseconds: 200),
+              curve: Curves.easeOut,
+              child: Row(
+                children: [
+                  const SizedBox(width: 8),
+                  _glyphButton(
+                    glyph: kGlyphPaste,
+                    fill: kSlate,
+                    cell: _iconCell,
+                    size: const Size(46, 46),
+                    onPressed: _pasteFromClipboard,
+                  ),
+                  const SizedBox(width: 8),
+                  _glyphButton(
+                    glyph: kGlyphFile,
+                    fill: kSlate,
+                    cell: _iconCell,
+                    size: const Size(46, 46),
+                    onPressed: _pickingFile ? null : _pickFile,
+                  ),
+                ],
+              ),
+            ),
           ),
-          const SizedBox(width: 8),
-          _glyphButton(
-            glyph: kGlyphFile,
-            fill: kSlate,
-            cell: _iconCell,
-            size: const Size(46, 46),
-            onPressed: _pickingFile ? null : _pickFile,
-          ),
-        ],
       ],
+      ),
     );
   }
 
@@ -2204,8 +2261,13 @@ class _TTSPageState extends State<TTSPage> with WidgetsBindingObserver {
   Widget _controlBox(Widget child) {
     final face = _faceAsset;
     return Stack(
-      // 판 밖으로 솟는 부분이 잘리지 않아야 한다
-      clipBehavior: Clip.none,
+      // 평소에는 얼굴이 판 밖으로 솟는다.
+      //
+      // 커서가 들어오면 판 안쪽으로 잘라 낸다. 그러지 않으면 입력칸과
+      // 판 사이의 검은 틈에 얼굴의 목덜미만 동떨어져 남는다 — 입력칸이
+      // 위를 덮고 있어 머리는 가려지는데 그 아래는 그대로이기 때문이다.
+      // 자르는 자리가 곧 판의 흰 면이라, 얼굴이 판 위에 얹힌 것처럼 된다.
+      clipBehavior: _shortFocused ? Clip.hardEdge : Clip.none,
       alignment: Alignment.bottomLeft,
       children: [
         PixelCard(
@@ -2228,9 +2290,9 @@ class _TTSPageState extends State<TTSPage> with WidgetsBindingObserver {
               onTapCancel: () => _setFacePressed(false),
               // 타임라인을 만지는 동안에도, 키패드가 올라와도 옅어진다
               child: AnimatedOpacity(
-                opacity: _facePressed || _scrubTouching || _shortFocused
-                    ? 0.3
-                    : 1,
+                // 인풋칸에 커서가 들어와도 옅어지지 않는다 — 대신
+                // 인풋칸이 얼굴 위로 올라온다 (_shortInputBlock).
+                opacity: _facePressed || _scrubTouching ? 0.3 : 1,
                 duration: const Duration(milliseconds: 120),
                 child: Image.asset(
                   face,

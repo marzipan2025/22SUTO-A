@@ -709,9 +709,7 @@ class _TTSPageState extends State<TTSPage> with WidgetsBindingObserver {
     return _sheetOption(
       title: 'UPDATE',
       action: action,
-      // 받는 동안 게이지와 숫자로 자란다. 평소에는 아래가 비어 있고,
-      // 그 자리로 자라므로 시트 높이는 그대로다.
-      lines: 2.5,
+      lines: 4,
       body: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         mainAxisSize: MainAxisSize.min,
@@ -742,9 +740,14 @@ class _TTSPageState extends State<TTSPage> with WidgetsBindingObserver {
 
   /// 설정 시트 아래쪽의 옵션 한 칸 — 제목·곁단추가 한 줄, 그 아래가 내용.
   ///
-  /// 내용 자리의 높이를 [lines] 줄로 못 박는다. 업데이트는 받는 동안
-  /// 게이지와 숫자로 자라는데, 그때마다 시트가 출렁이면 눌러야 할 것이
-  /// 자꾸 움직인다. 평소에는 아래가 비어 있다가 필요할 때 그리로 자란다.
+  /// 내용 자리를 [lines] 줄로 **먼저 못 박고** 거기에 내용을 넣는다.
+  /// 내용이 높이를 정하게 두면 상태가 바뀔 때마다 시트가 출렁이고,
+  /// 눌러야 할 것이 자꾸 움직인다.
+  ///
+  /// 그러므로 자리는 **가장 키가 큰 상태에 맞춰** 잡아야 한다. 업데이트
+  /// 칸이 가장 크게 자라는 때는 받을 것이 있고 오류까지 겹칠 때다:
+  /// 버전 줄 20 + 사이 10 + 단추 24 + 사이 8 + 오류 17 = 79dp.
+  /// 네 줄(80dp)이면 그것까지 받는다. 평소에는 그만큼 비어 있다.
   ///
   /// 옵션이 더 늘어도 이 틀에 한 줄 얹으면 된다.
   Widget _sheetOption({

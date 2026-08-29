@@ -2,7 +2,11 @@
 ///
 /// 문장 부호와 줄바꿈으로 나눈 뒤, 너무 짧은 조각은 최소 길이에 이를 때까지
 /// 뒤 문장과 합쳐 덩어리 길이를 고르게 만든다.
+///
+/// 자막(SRT)은 예외다 — 이미 대사 단위로 끊겨 있어 다시 쪼개지 않는다.
 library;
+
+import 'package:suto_a/srt.dart';
 
 const _enders = {'.', '!', '?', '。', '！', '？', '…', '‥'};
 const _closers = {'"', "'", ')', ']', '}', '»', '”', '’', '』', '」'};
@@ -59,6 +63,13 @@ List<String> splitUnits(String text, String lang) {
   final maxLen = maxLenForLang(lang);
   final normalized = text.replaceAll('\r\n', '\n').trim();
   if (normalized.isEmpty) return const [];
+
+  // 자막이면 사람이 이미 대사 하나씩 끊어 둔 것이다. 다시 쪼개지 않고
+  // 한 대사를 한 칸으로 쓴다.
+  if (looksLikeSrt(normalized)) {
+    final cues = srtCues(normalized);
+    if (cues.isNotEmpty) return cues;
+  }
 
   // 1) 문장 단위로 자르고, 너무 긴 것은 다시 쪼갠다
   final pieces = <String>[];
@@ -178,9 +189,25 @@ String cleanText(String text) {
     final isPictograph = (rune >= 0x1F000 && rune <= 0x1FAFF) ||
         (rune >= 0x2600 && rune <= 0x27BF) ||
         (rune >= 0x2190 && rune <= 0x21FF) ||
-        (rune >= 0xFE00 && rune <= 0xFE0F) ||
-        rune == 0x200D;
-    if (!isPictograph) buf.writeCharCode(rune);
+        (rune >= 0xFE00 && rune <= 0xFE0F);
+
+    // 눈에 보이지 않는 서식 문자.
+    //
+    // 글자가 아닌데도 음성 모델의 글자 사전에 번호가 붙어 있어
+    // (U+200E → 630, U+200B → 629) 그대로 넘기면 소리로 읽힌다.
+    // 자막 파일은 대사마다 앞에 이런 표가 붙어 오는 일이 흔하다 —
+    // 어떤 파일은 대사 1230개 중 1228개가 U+200E 로 시작했다.
+    // 웹에서 복사해 온 글에도 곧잘 섞인다.
+    //
+    // U+2060(이음표)은 남긴다. 화면에 글을 그릴 때 낱말이 잘리지 않도록
+    // byWord 가 일부러 끼워 넣는 것이라, 뜻이 있는 자리다.
+    final isInvisible = rune == 0x00AD || // 안 보이는 연결선
+        (rune >= 0x200B && rune <= 0x200F) || // 폭 없는 공백 · 좌우 표시
+        (rune >= 0x202A && rune <= 0x202E) || // 쓰기 방향 묶기
+        (rune >= 0x2066 && rune <= 0x2069) || // 쓰기 방향 가두기
+        rune == 0xFEFF; // 파일 머리표(BOM)
+
+    if (!isPictograph && !isInvisible) buf.writeCharCode(rune);
   }
   return buf.toString();
 }

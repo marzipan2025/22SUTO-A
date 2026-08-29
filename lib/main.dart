@@ -118,7 +118,9 @@ class _TTSPageState extends State<TTSPage> with WidgetsBindingObserver {
     fontFamily: kDisplayFamily,
     fontSize: _numberFontSize,
     height: _numberLineFactor,
-    color: kMuted,
+    // 표시어(Panchang)는 네 벌이 다 들어 있어 굵기를 골라 쓸 수 있다
+    fontWeight: FontWeight.w600,
+    color: kOnLight,
   );
   static const _itemMinHeight = 44.0;
 
@@ -2172,9 +2174,7 @@ class _TTSPageState extends State<TTSPage> with WidgetsBindingObserver {
                           style: _bodyStyle.copyWith(color: skin.ink),
                         ),
                         // 셀 번호 — 본문 아래 한 줄, 좌측
-                        Text('${i + 1}',
-                            style: _numberStyle.copyWith(
-                                color: skin.ink.withValues(alpha: 0.45))),
+                        Text('${i + 1}', style: _numberStyle),
                       ],
                     ),
                   ),

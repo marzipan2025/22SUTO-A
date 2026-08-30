@@ -7,6 +7,7 @@ import 'package:flutter/foundation.dart';
 import 'package:just_audio/just_audio.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:suto_a/helper.dart';
+import 'package:suto_a/model_store.dart' show onnxDirPath, voiceStylesDirPath;
 import 'package:suto_a/sentence_splitter.dart';
 
 /// 문장 하나의 상태
@@ -216,7 +217,7 @@ class NarrationEngine extends ChangeNotifier {
 
   Future<void> loadModels() async {
     _setStatus('음성 엔진 준비 중...');
-    _tts = await loadTextToSpeech('assets/onnx', useGpu: false);
+    _tts = await loadTextToSpeech(await onnxDirPath(), useGpu: false);
     await _style('M1');
     _setStatus('준비 완료');
 
@@ -238,7 +239,7 @@ class NarrationEngine extends ChangeNotifier {
   bool get modelsLoaded => _tts != null;
 
   Future<Style> _style(String voice) async => _styleCache[voice] ??=
-      await loadVoiceStyle(['assets/voice_styles/$voice.json']);
+      await loadVoiceStyle(['${await voiceStylesDirPath()}/$voice.json']);
 
   // ------------------------------------------------------------ 설정 변경
   /// 읽는 도중에도 설정을 바꾼다.

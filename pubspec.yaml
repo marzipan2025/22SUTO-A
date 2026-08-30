@@ -1,7 +1,7 @@
 name: suto_a
 description: "22SUTO-A — Supertonic 3 on-device TTS for Android"
 publish_to: 'none'
-version: 0.4.12+41
+version: 0.5.0+42
 
 environment:
   sdk: ^3.5.0
@@ -28,8 +28,9 @@ flutter_launcher_icons:
 flutter:
   uses-material-design: true
   assets:
-    - assets/onnx/
-    - assets/voice_styles/
+    # 모델(assets/onnx, assets/voice_styles)은 앱에 넣지 않는다.
+    # 400MB 라 앱을 고칠 때마다 함께 받게 되어, 갱신이 480MB 가 됐다.
+    # 이제 lib/model_store.dart 가 Hugging Face 에서 따로 받아 둔다.
     - assets/char/
     - assets/char/full/
   fonts:

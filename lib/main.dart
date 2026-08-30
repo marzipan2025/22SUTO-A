@@ -7,6 +7,7 @@ import 'package:flutter/rendering.dart' show ScrollDirection;
 import 'package:flutter/services.dart';
 import 'package:suto_a/hangul.dart';
 import 'package:suto_a/helper.dart';
+import 'package:suto_a/model_store.dart';
 import 'package:suto_a/narration_engine.dart';
 import 'package:suto_a/pixel.dart';
 import 'package:suto_a/settings_store.dart';
@@ -192,9 +193,25 @@ class _TTSPageState extends State<TTSPage> with WidgetsBindingObserver {
   CancelToken? _downloadCancel;
   /// 켤 때 뜬 알림을 두 번 띄우지 않기 위한 표
   bool _updateToastShown = false;
+  /// 확인을 눌러 앱과 모델 양쪽에 묻고 있는 중
+  bool _checking = false;
+  /// 지금 깔려 있는 판 번호. 아직 확인을 누르지 않았을 때 이것만 적는다.
+  String? _version;
   bool _showList = false; // 입력 화면 ↔ 진행 화면
   bool _pickingFile = false;
   Timer? _pickWatchdog;
+
+  // ---- 음성 모델 (Supertonic 3) ----
+  /// 모델이 폰에 온전히 받아져 있는가. 없으면 읽기를 시작할 수 없다.
+  bool _modelReady = false;
+  /// 설정에서 확인을 눌렀을 때의 결과. 아직 안 물어봤으면 null.
+  ModelStatus? _model;
+  DownloadProgress? _modelDownloading;
+  CancelToken? _modelCancel;
+  String? _modelError;
+  /// 모델 안내 시트를 다시 그리는 손잡이. 시트는 앱 화면과 따로 떠 있어서
+  /// setState 만으로는 다시 그려지지 않는다. 시트가 떠 있는 동안만 찬다.
+  void Function()? _modelRedraw;
 
   /// 만들어둔 음성이 차지하는 크기 (설정에서 보여준다)
   int? _voiceBytes;
@@ -473,6 +490,21 @@ class _TTSPageState extends State<TTSPage> with WidgetsBindingObserver {
     // 시작해, 아이콘만 보이는 시간을 줄인다.
     await WidgetsBinding.instance.endOfFrame;
 
+    // 모델은 앱과 따로 산다. 받아 둔 것이 없으면 엔진을 세울 수 없으니,
+    // 먼저 받자고 청한다.
+    if (!await modelInstalled()) {
+      if (!mounted) return;
+      setState(() => _modelReady = false);
+      _openModelSheet();
+      return;
+    }
+    if (mounted) setState(() => _modelReady = true);
+
+    await _startEngine();
+  }
+
+  /// 모델을 다 갖춘 뒤 엔진을 세운다.
+  Future<void> _startEngine() async {
     try {
       await _engine.loadModels();
       if (mounted) setState(() => _ready = true);
@@ -516,6 +548,10 @@ class _TTSPageState extends State<TTSPage> with WidgetsBindingObserver {
   /// 최신이거나 GitHub 에 못 닿았으면 아무 말도 하지 않는다 — 켤 때마다
   /// "최신입니다" 를 띄우는 건 성가시기만 하다. 새 버전이 있을 때만 알린다.
   Future<void> _checkUpdateOnLaunch() async {
+    // 설정을 열었을 때 아직 확인을 누르지 않았어도 지금 판 번호는 보여야 한다
+    final v = await currentVersion();
+    if (mounted) setState(() => _version = v);
+
     final status = await fetchStatus();
     if (!mounted) return;
     setState(() => _update = status);
@@ -523,6 +559,231 @@ class _TTSPageState extends State<TTSPage> with WidgetsBindingObserver {
       _updateToastShown = true;
       _showToast('새 버전 v${status.latest} 이 있어요 — 설정에서 받으세요');
     }
+  }
+
+  // --------------------------------------------------------- 음성 모델 받기
+
+  /// 모델을 받는다. 시트 안에서도, 켤 때 뜨는 안내에서도 이 하나를 쓴다.
+  ///
+  /// [redraw] 는 시트와 앱 화면을 함께 다시 그리는 손잡이다.
+  Future<void> _runModelDownload(
+      ModelManifest remote, void Function() redraw) async {
+    final cancel = CancelToken();
+    _modelCancel = cancel;
+    _modelError = null;
+    _modelDownloading = DownloadProgress(0, remote.totalBytes);
+    redraw();
+
+    try {
+      await downloadModel(
+        remote,
+        cancel: cancel,
+        onProgress: (p) {
+          // 초당 수백 번 온다. 눈에 보일 만큼 나아갔을 때만 다시 그린다.
+          final before = _modelDownloading;
+          if (before == null) return;
+          final step = p.total > 0 ? p.total ~/ 200 : 1 << 20;
+          if (p.received - before.received < step && p.received < p.total) {
+            return;
+          }
+          _modelDownloading = p;
+          redraw();
+        },
+      );
+      _modelDownloading = null;
+      _model = const ModelUpToDate();
+      if (mounted) setState(() => _modelReady = true);
+      redraw();
+
+      // 새 모델을 받았으면 지금 물고 있는 엔진은 옛 모델이다. 이미 세워져
+      // 있다면 그대로 두고 — 읽는 중일 수 있다 — 다음에 켤 때 새것으로
+      // 뜬다. 아직 안 세워졌다면(첫 실행) 지금 세운다.
+      if (!_ready) await _startEngine();
+      redraw();
+    } catch (e) {
+      _modelDownloading = null;
+      _modelError =
+          e is ModelDownloadCancelled ? null : '받지 못했어요 — 다시 눌러 보세요';
+      if (e is! ModelDownloadCancelled) logger.w('모델 받기 실패: $e');
+      redraw();
+    } finally {
+      _modelCancel = null;
+    }
+  }
+
+  /// 모델이 없을 때 켜자마자 뜨는 안내.
+  ///
+  /// 받기 전에는 아무것도 읽을 수 없으므로 밖을 눌러 닫지 못하게 한다.
+  /// 대신 '나중에' 로 물러날 수는 있다 — 지금 받을 형편이 아닐 수 있다.
+  /// [update] 가 참이면 이미 받아 둔 것이 있고 새 판이 나온 경우다.
+  /// 그때는 밖을 눌러 닫을 수 있다 — 지금 것으로도 읽을 수 있으니까.
+  void _openModelSheet({bool update = false}) {
+    showModalBottomSheet<void>(
+      context: context,
+      backgroundColor: kSteel,
+      isScrollControlled: true,
+      isDismissible: update,
+      enableDrag: update,
+      shape: const PixelBorder(unit: 6),
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setSheet) {
+          void redraw() {
+            setSheet(() {});
+            if (mounted) setState(() {});
+          }
+
+          _modelRedraw = redraw;
+
+          final downloading = _modelDownloading;
+          final remote = switch (_model) {
+            ModelMissing(:final remote) => remote,
+            ModelOutdated(:final remote) => remote,
+            _ => null,
+          };
+
+          Future<void> ask() async {
+            // 이미 무엇을 받아야 하는지 알고 있으면 곧바로 받는다
+            if (remote != null) {
+              await _runModelDownload(remote, redraw);
+              return;
+            }
+            _modelError = null;
+            _model = null;
+            redraw();
+            final status = await fetchModelStatus();
+            _model = status;
+            redraw();
+            switch (status) {
+              case ModelMissing(:final remote):
+              case ModelOutdated(:final remote):
+                await _runModelDownload(remote, redraw);
+              case ModelUpToDate():
+                // 다른 데서 이미 채워졌다
+                if (mounted) setState(() => _modelReady = true);
+                if (!_ready) await _startEngine();
+                redraw();
+              case ModelCheckFailed():
+                break;
+            }
+          }
+
+          final body = <Widget>[];
+          if (downloading != null) {
+            final f = downloading.fraction;
+            body.addAll([
+              PixelGauge(value: f, cells: 16, height: _sheetGauge),
+              const SizedBox(height: 10),
+              Text(
+                f == null
+                    ? _mb(downloading.received)
+                    : '${(f * 100).round()}%  '
+                        '${_mb(downloading.received)}/${_mb(downloading.total)}',
+                style: _sheetValue,
+              ),
+            ]);
+          } else if (_modelReady && !update) {
+            body.add(Text('READY', style: _sheetValue.copyWith(color: kYellow)));
+          } else if (update && _model is ModelUpToDate) {
+            // 새 판을 다 받았다. 지금 물고 있는 엔진은 아직 옛 모델이다.
+            body.addAll([
+              Text('UPDATED', style: _sheetValue.copyWith(color: kYellow)),
+              const SizedBox(height: 6),
+              Text('Restart the app to use it.', style: _sheetValue),
+            ]);
+          } else if (_model == null && _modelError == null) {
+            body.add(Text('CHECKING', style: _sheetValue.copyWith(color: kMuted)));
+          } else if (remote != null) {
+            body.add(Text(
+                update
+                    ? _mb(remote.totalBytes)
+                    : '${_mb(remote.totalBytes)}  ·  ONE TIME',
+                style: _sheetValue.copyWith(color: kYellow)));
+          } else {
+            body.add(
+                Text('NO NETWORK', style: _sheetValue.copyWith(color: kMuted)));
+          }
+
+          if (_modelError != null) {
+            body.addAll([
+              const SizedBox(height: 8),
+              Text(_modelError!,
+                  style: const TextStyle(fontSize: 13, color: kRed)),
+            ]);
+          }
+
+          return Padding(
+            padding: const EdgeInsets.fromLTRB(20, 16, 20, 51),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Center(child: Container(width: 44, height: 4, color: kMuted)),
+                const SizedBox(height: 20),
+                Center(
+                  child: Text('VOICE MODEL',
+                      style: displayStyle(
+                          size: 15, color: kYellow, letterSpacing: 2.4)),
+                ),
+                const SizedBox(height: 18),
+                Text(
+                  update
+                      ? 'A new Supertonic 3 is out.\n'
+                          'Voices you already made are kept.'
+                      : 'Supertonic 3 runs on your phone.\n'
+                          'Download once, then read offline.',
+                  style: displayStyle(size: 13, color: kOnSteel, letterSpacing: 1.0)
+                      .copyWith(height: 1.7),
+                ),
+                const SizedBox(height: 18),
+                // 내용이 높이를 정하지 않도록 자리부터 잡는다
+                SizedBox(
+                  height: _sheetBodyLine * 3,
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    mainAxisSize: MainAxisSize.min,
+                    children: body,
+                  ),
+                ),
+                const SizedBox(height: 8),
+                if (_modelReady && (!update || _model is ModelUpToDate))
+                  _sheetButton(update ? 'CLOSE' : 'START',
+                      color: kYellow, onTap: () => Navigator.pop(ctx))
+                else if (downloading != null)
+                  _sheetButton('STOP',
+                      color: kSlate, onTap: () => _modelCancel?.cancel())
+                else
+                  Row(children: [
+                    Expanded(
+                      flex: 4,
+                      child: _sheetButton('LATER',
+                          color: kSlate, onTap: () => Navigator.pop(ctx)),
+                    ),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      flex: 6,
+                      child: _sheetButton('DOWNLOAD',
+                          color: kYellow, onTap: () => unawaited(ask())),
+                    ),
+                  ]),
+              ],
+            ),
+          );
+        },
+      ),
+    ).whenComplete(() {
+      _modelRedraw = null;
+      if (mounted) setState(() {});
+    });
+
+    // 열자마자 얼마나 받아야 하는지부터 알아본다 — 누르기 전에 크기가 보여야
+    // 받을지 말지 정할 수 있다.
+    unawaited(() async {
+      final status = await fetchModelStatus();
+      if (!mounted) return;
+      _model = status;
+      _modelRedraw?.call();
+      setState(() {});
+    }());
   }
 
   /// 설정 시트의 '저장한 용량' 칸.
@@ -535,11 +796,26 @@ class _TTSPageState extends State<TTSPage> with WidgetsBindingObserver {
     Future<void> clear() async {
       await NarrationEngine.clearVoice();
       _engine.resumeAfterCleanup();
+
+      // 음성을 버렸으면 '어디까지 읽었는지' 도 함께 버린다.
+      //
+      // 그 자리를 가리키던 음성 파일이 이제 없으므로, 남겨 두면 다시 들어갈
+      // 때 없는 파일을 물으러 간다. 무엇보다 사람이 지우겠다고 한 것은
+      // '만들어둔 것' 전부다 — 절반만 지우면 다음에 열었을 때 중간부터
+      // 시작하면서 앞을 다시 만드는, 가장 헷갈리는 꼴이 된다.
+      for (final s in _sources) {
+        s.lastIndex = 0;
+        s.lastFilePath = null;
+      }
+      await saveSources(_sources);
+      // 셀 아래 띠도 다시 잰다 — 이제 만들어둔 것이 하나도 없다
+      await _refreshMade();
+
       final b = await NarrationEngine.voiceBytes();
       _voiceBytes = b;
       refresh(() {});
       if (mounted) setState(() {});
-      _showToast('만들어둔 음성을 지웠어요');
+      _showToast('만들어둔 음성과 읽던 자리를 지웠어요');
     }
 
     return _sheetOption(
@@ -576,14 +852,36 @@ class _TTSPageState extends State<TTSPage> with WidgetsBindingObserver {
       if (mounted) setState(() {});
     }
 
+    /// 한 번 눌러 양쪽을 함께 묻는다 — 앱과 음성 모델.
+    ///
+    /// 둘은 따로 배포되지만 사람에게는 '새것이 있나' 하나의 물음이다.
+    /// 나란히 물어 두 줄로 답한다.
+    /// 한 번 눌러 양쪽을 함께 묻는다 — 앱과 음성 모델.
+    ///
+    /// 앱 쪽 결과만 여기 적는다. 모델은 새것이 있어도 이 좁은 칸에서
+    /// 다룰 일이 아니다 — 383MB 를 받을지 정하는 물음이므로, 처음 받을
+    /// 때와 똑같은 안내를 띄워 거기서 정하게 한다.
     Future<void> check() async {
       refresh(() {
+        _checking = true;
         _update = null;
         _updateError = null;
+        _model = null;
+        _modelError = null;
       });
-      final status = await fetchStatus();
-      _update = status;
+      final app = fetchStatus();
+      final model = fetchModelStatus();
+      _update = await app;
+      final m = await model;
+      _model = m;
+      _checking = false;
       redraw();
+
+      if (m is ModelOutdated) {
+        if (mounted) _openModelSheet(update: true);
+      } else if (m is ModelMissing) {
+        if (mounted) _openModelSheet();
+      }
     }
 
     Future<void> download(UpdateAvailable info) async {
@@ -624,14 +922,21 @@ class _TTSPageState extends State<TTSPage> with WidgetsBindingObserver {
       redraw();
     }
 
+    final downloading = _downloading;
+    final downloaded = _downloaded;
+    final modelDownloading = _modelDownloading;
+    final busy = downloading != null || modelDownloading != null;
+
     // 받는 중에는 '중지' 가 '확인' 자리를 대신한다
-    final Widget? action = _downloading != null
+    final Widget? action = busy
         ? _pixelTap(
-            onTap: () => _downloadCancel?.cancel(),
+            onTap: () => downloading != null
+                ? _downloadCancel?.cancel()
+                : _modelCancel?.cancel(),
             padding: const EdgeInsets.symmetric(horizontal: 2, vertical: 4),
             child: Text('STOP', style: _sheetAction),
           )
-        : (_downloaded == null
+        : (downloaded == null
             ? _pixelTap(
                 onTap: check,
                 padding: const EdgeInsets.symmetric(horizontal: 2, vertical: 4),
@@ -641,87 +946,64 @@ class _TTSPageState extends State<TTSPage> with WidgetsBindingObserver {
 
     final rows = <Widget>[];
 
-    final status = _update;
-    final downloading = _downloading;
-    final downloaded = _downloaded;
-
-    if (downloading != null) {
-      final f = downloading.fraction;
+    if (busy) {
+      final p = downloading ?? modelDownloading!;
+      final f = p.fraction;
       rows.addAll([
-        // 게이지의 한가운데를 왼쪽 칸 숫자의 한가운데에 맞춘다. 위에만
-        // 여백을 주고 아래는 비우지 않는다 — 바로 밑의 숫자가 게이지에
-        // 거의 붙어야 한다.
+        // 게이지의 한가운데를 왼쪽 칸 숫자의 한가운데에 맞춘다.
         const SizedBox(height: (_sheetBodyLine - _sheetGauge) / 2),
         PixelGauge(value: f, cells: 12, height: _sheetGauge),
         const SizedBox(height: 2),
         Text(
           f == null
-              ? _mb(downloading.received)
-              : '${(f * 100).round()}%  ${_mb(downloading.received)}/${_mb(downloading.total)}',
+              ? _mb(p.received)
+              : '${(f * 100).round()}%  ${_mb(p.received)}/${_mb(p.total)}',
           style: _sheetValue,
         ),
       ]);
-    } else if (downloaded != null) {
-      rows.addAll([
-        _sheetLine(Text('READY', style: _sheetValue.copyWith(color: kYellow))),
-        const SizedBox(height: 10),
-        Row(children: [
-          _pixelTap(
-            onTap: () => installApk(downloaded).catchError((e) {
-              _updateError = '설치 화면을 열지 못했어요';
-              logger.w('설치 실패: $e');
-              redraw();
-            }),
-            padding: const EdgeInsets.symmetric(horizontal: 2, vertical: 4),
-            child: Text('INSTALL',
-                style: displayStyle(
-                    size: 13, color: kYellow, letterSpacing: 1.4)),
-          ),
-        ]),
-      ]);
-    } else if (status == null) {
-      rows.add(_sheetLine(
-          Text('CHECKING', style: _sheetValue.copyWith(color: kMuted))));
-    } else if (status is UpToDate) {
-      rows.add(_sheetLine(
-          Text('UP TO DATE · v ${status.current}', style: _sheetValue)));
-    } else if (status is UpdateAvailable) {
-      rows.addAll([
-        _sheetLine(Text(
-          'v ${status.latest}'
-          '${status.bytes > 0 ? '  ·  ${_mb(status.bytes)}' : ''}',
-          style: _sheetValue.copyWith(color: kYellow),
-        )),
-        const SizedBox(height: 10),
-        Row(children: [
-          _pixelTap(
-            onTap: () => download(status),
-            padding: const EdgeInsets.symmetric(horizontal: 2, vertical: 4),
-            child: Text(status.apkUrl == null ? 'RELEASES' : 'DOWNLOAD',
-                style: displayStyle(
-                    size: 13, color: kYellow, letterSpacing: 1.4)),
-          ),
-        ]),
-      ]);
     } else {
-      rows.addAll([
-        _sheetLine(
-            Text('NO NETWORK', style: _sheetValue.copyWith(color: kMuted))),
-        const SizedBox(height: 10),
-        Row(children: [
-          _pixelTap(
-            onTap: openReleasesPage,
-            padding: const EdgeInsets.symmetric(horizontal: 2, vertical: 4),
-            child: Text('RELEASES', style: _sheetAction),
-          ),
-        ]),
-      ]);
+      // 모델은 여기 적지 않는다 — 새것이 있으면 안내가 따로 뜬다.
+      rows.add(_sheetLine(_appStateText()));
+
+      final buttons = <Widget>[];
+      final status = _update;
+
+      if (downloaded != null) {
+        buttons.add(_sheetTextButton(
+          'INSTALL',
+          onTap: () => installApk(downloaded).catchError((e) {
+            _updateError = '설치 화면을 열지 못했어요';
+            logger.w('설치 실패: $e');
+            redraw();
+          }),
+        ));
+      } else if (status is UpdateAvailable) {
+        buttons.add(_sheetTextButton(
+          status.apkUrl == null ? 'RELEASES' : 'GET APP',
+          onTap: () => unawaited(download(status)),
+        ));
+      } else if (status is UpdateCheckFailed) {
+        buttons.add(_sheetTextButton('RELEASES', onTap: openReleasesPage));
+      }
+
+      if (buttons.isNotEmpty) {
+        rows.addAll([
+          const SizedBox(height: 8),
+          Row(children: [
+            for (final b in buttons) ...[
+              b,
+              const SizedBox(width: 16),
+            ],
+          ]),
+        ]);
+      }
     }
 
-    if (_updateError != null) {
+    final err = _updateError ?? _modelError;
+    if (err != null) {
       rows.addAll([
-        const SizedBox(height: 8),
-        Text(_updateError!, style: const TextStyle(fontSize: 13, color: kRed)),
+        const SizedBox(height: 6),
+        Text(err, style: const TextStyle(fontSize: 13, color: kRed)),
       ]);
     }
 
@@ -737,6 +1019,33 @@ class _TTSPageState extends State<TTSPage> with WidgetsBindingObserver {
     );
   }
 
+  /// 앱 쪽 한 줄
+  Widget _appStateText() {
+    if (_checking) {
+      return Text('CHECKING', style: _sheetValue.copyWith(color: kMuted));
+    }
+    return switch (_update) {
+      UpToDate(:final current) =>
+        Text('UP TO DATE · v $current', style: _sheetValue),
+      UpdateAvailable(:final latest, :final bytes) => Text(
+          'v $latest${bytes > 0 ? '  ·  ${_mb(bytes)}' : ''}',
+          style: _sheetValue.copyWith(color: kYellow)),
+      UpdateCheckFailed() =>
+        Text('NO NETWORK', style: _sheetValue.copyWith(color: kMuted)),
+      // 아직 안 물어봤다 — 지금 깔린 버전만 조용히 적는다
+      null => Text('v ${_version ?? ''}', style: _sheetValue),
+    };
+  }
+
+  /// 칸 안에 서는 글자 단추 — 노란 표시어 한 마디
+  Widget _sheetTextButton(String label, {required VoidCallback onTap}) =>
+      _pixelTap(
+        onTap: onTap,
+        padding: const EdgeInsets.symmetric(horizontal: 2, vertical: 4),
+        child: Text(label,
+            style: displayStyle(size: 13, color: kYellow, letterSpacing: 1.4)),
+      );
+
   /// 설정 시트 아래 두 칸이 같은 결로 보이게 묶어 둔 글자 모양
   /// 아래 두 칸의 제목·곁단추·값. 셋 다 표시어(Panchang)로 적는다.
   /// 위쪽 SPEED·QUALITY 보다 한 급 작아, 눈이 먼저 위로 간다.
@@ -746,6 +1055,7 @@ class _TTSPageState extends State<TTSPage> with WidgetsBindingObserver {
       displayStyle(size: 11, color: kSlate, letterSpacing: 1.2);
   static final _sheetValue =
       displayStyle(size: 13, color: kOnSteel, letterSpacing: 1.2);
+
 
   /// 설정 시트 두 칸의 '첫 줄' 높이.
   ///
@@ -2244,15 +2554,22 @@ class _TTSPageState extends State<TTSPage> with WidgetsBindingObserver {
       // 인풋박스에 글자가 있으면 그것만, 없으면 선택된 셀을 읽는다
       final canStart = _ready && (hasShort || _selectedSource != null);
 
+      // 모델이 없으면 읽을 수가 없다. 멈춰 세우는 대신 받는 자리로 데려간다.
+      final needModel = !_modelReady;
+
       // 단추는 오른쪽. 왼쪽 바닥은 캐릭터가 선다.
       return _controlBox(
         Row(
           mainAxisAlignment: MainAxisAlignment.end,
           children: [
             _wordAction(
-              label: !_ready ? 'LOADING' : (hasShort ? 'SAY' : 'PLAY'),
+              label: needModel
+                  ? 'GET VOICE'
+                  : (!_ready ? 'LOADING' : (hasShort ? 'SAY' : 'PLAY')),
               weight: FontWeight.w700,
-              onTap: canStart ? _start : null,
+              onTap: needModel
+                  ? _openModelSheet
+                  : (canStart ? _start : null),
             ),
           ],
         ),

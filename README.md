@@ -6,7 +6,9 @@ Supertonic 3 기반 안드로이드 온디바이스 TTS 앱. 22SUTO(macOS)의 �
 ## 개발 환경 준비 (최초 1회)
 
 1. [Flutter SDK](https://docs.flutter.dev/get-started/install/macos) 와 Android Studio 설치
-2. 모델 다운로드 (~400MB): `bash scripts/download_assets.sh`
+2. (선택) 모델 미리 받기: `bash scripts/download_assets.sh`
+   — 앱은 첫 실행 때 폰에서 직접 받는다. 이 스크립트는 맥에서 모델을
+   들여다볼 일이 있을 때만 쓴다. 빌드에는 필요 없다.
 3. 안드로이드 플랫폼 파일 생성: `flutter create --platforms=android --org com.artbrain --project-name suto_a .`
 4. AndroidManifest.xml에 공유 수신 intent-filter 추가 (아래 참고)
 5. 앱 아이콘 생성: `python3 scripts/make_icons.py`
@@ -38,10 +40,25 @@ flutter build appbundle   # 플레이스토어 업로드용 .aab
 - `lib/narration_engine.dart` — 선행 합성 파이프라인
 - `lib/theme.dart` — 색·글꼴·픽셀 카드
 - `lib/pixel.dart` — 격자 아이콘, 계단 모서리, 목록 끝 덮개
-- `scripts/download_assets.sh` — Hugging Face에서 모델 받기
+- `lib/model_store.dart` — 음성 모델을 앱과 따로 두고 받아 두기
+- `scripts/download_assets.sh` — (맥에서 들여다볼 때만) Hugging Face에서 모델 받기
 - `scripts/make_icons.py` — 밑그림 한 장에서 앱 아이콘 전부 뽑기 (아래 참고)
 - `scripts/make_chars.py` — 받은 캐릭터 그림을 앱에 넣을 꼴로 다듬기 (아래 참고)
 - 모델 파일은 용량 문제로 git에 포함하지 않음
+
+## 음성 모델은 앱과 따로 산다
+
+Supertonic 3 (383MB) 은 APK 안에 넣지 않는다. 넣었을 때는 글자 하나만
+고쳐도 480MB 를 다시 받아야 했다. 갈라 둔 지금 앱 갱신은 104MB 다.
+
+- 첫 실행 때 안내가 뜨고, 받으면 앱 지원 폴더의 `model/` 에 들어간다.
+- 다 받았을 때만 `model/manifest.json` 을 남긴다. 도중에 죽으면 지문이
+  없으므로 '받다 만 것' 으로 알고 다시 청한다.
+- 큰 파일은 `.part` 로 받다가 끊기면 그 자리에서 이어받는다 (HTTP Range).
+- 새 모델이 나왔는지는 **설정에서 CHECK 를 눌렀을 때만** 묻는다. 그 한
+  번의 확인이 앱과 모델 양쪽을 함께 본다.
+- 견줄 때는 저장소 커밋(sha)이 아니라 **우리가 쓰는 16개 파일의 blob
+  이름**을 본다. 읽어 보기 한 줄이 고쳐졌다고 알림이 뜨면 안 된다.
 
 ## 아이콘
 

@@ -624,7 +624,9 @@ Future<Style> loadVoiceStyle(List<String> paths) async {
 
 Future<Map<String, dynamic>> _loadCfgs(String onnxDir) async {
   final path = '$onnxDir/tts.json';
-  final json = jsonDecode(await rootBundle.loadString(path));
+  final json = jsonDecode(path.startsWith('assets/')
+      ? await rootBundle.loadString(path)
+      : File(path).readAsStringSync());
   return json as Map<String, dynamic>;
 }
 
@@ -635,6 +637,9 @@ Future<Map<String, dynamic>> _loadCfgs(String onnxDir) async {
 /// 화면이 뜨지 못하고 아이콘만 보였다.
 /// [stamp] 는 설치본마다 달라지므로, 앱을 새로 깔면 저절로 다시 꺼낸다.
 Future<String> copyModelToFile(String path, String stamp) async {
+  // 앱 밖에 받아 둔 모델은 이미 파일이다 — 꺼낼 것이 없다.
+  if (!path.startsWith('assets/')) return path;
+
   final tempDir = await getApplicationCacheDirectory();
   final modelPath = '${tempDir.path}/${path.split("/").last}';
   final file = File(modelPath);

@@ -683,8 +683,8 @@ class _TTSPageState extends State<TTSPage> with WidgetsBindingObserver {
       rows.add(_sheetLine(
           Text('CHECKING', style: _sheetValue.copyWith(color: kMuted))));
     } else if (status is UpToDate) {
-      // 평소 표기는 지금 깔린 버전 숫자다
-      rows.add(_sheetLine(Text('v ${status.current}', style: _sheetValue)));
+      rows.add(_sheetLine(
+          Text('UP TO DATE · v ${status.current}', style: _sheetValue)));
     } else if (status is UpdateAvailable) {
       rows.addAll([
         _sheetLine(Text(
@@ -1390,6 +1390,17 @@ class _TTSPageState extends State<TTSPage> with WidgetsBindingObserver {
   // ---- 설정 시트 ----
   void _openSettings() => _openSheet(title: 'SETTINGS');
 
+  /// 설정 맨 아래 — 이 앱이 기대고 있는 것들. 누르면 바깥 브라우저로 나간다.
+  Widget _licenseRow() => _sheetOption(
+        title: 'LICENSE',
+        action: _pixelTap(
+          onTap: () => unawaited(openLicensesPage()),
+          padding: const EdgeInsets.symmetric(horizontal: 2, vertical: 4),
+          child: Text('OPEN', style: _sheetAction),
+        ),
+        body: _sheetLine(Text('MIT · OPENRAIL-M · OFL', style: _sheetValue)),
+      );
+
   /// REMAKE — 문장 하나를 새 설정으로 다시 만든다.
   void _openRemake(int index) {
     // 지금 설정에서 출발하되, 전역은 건드리지 않는 임시본을 만진다
@@ -1532,6 +1543,8 @@ class _TTSPageState extends State<TTSPage> with WidgetsBindingObserver {
                   // 나란히 놓으면 둘 다 폭이 좁아 값이 구겨진다.
                   // 위아래로 두고 각자 한 줄을 온전히 쓴다.
                   _voiceRow(setSheet),
+                  const SizedBox(height: 14),
+                  _licenseRow(),
                   const SizedBox(height: 14),
                   _updateRow(setSheet),
                 ],
@@ -1715,7 +1728,7 @@ class _TTSPageState extends State<TTSPage> with WidgetsBindingObserver {
                   ]),
                 ),
                 const SizedBox(height: 2),
-                const Text('Supertonic 3 · 내 폰에서 바로 만드는 음성',
+                const Text('Supertonic 3 · on-device text to speech',
                     style: TextStyle(fontSize: 13, color: kMuted)),
               ],
             ),

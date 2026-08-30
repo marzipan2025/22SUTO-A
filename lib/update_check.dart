@@ -20,6 +20,10 @@ const _updateChannel = MethodChannel('suto_a/update');
 
 const _repo = 'marzipan2025/22SUTO-A';
 const releasesPageUrl = 'https://github.com/$_repo/releases';
+
+/// 이 앱이 기대고 있는 것들을 적어 둔 자리
+const licensesPageUrl =
+    'https://github.com/$_repo/blob/main/LICENSES.md';
 const _latestApiUrl = 'https://api.github.com/repos/$_repo/releases/latest';
 
 /// 한 번 확인한 결과
@@ -213,3 +217,6 @@ Future<void> installApk(File apk) =>
 /// 릴리스 페이지를 브라우저로 연다 (APK 가 없거나 설치가 막혔을 때)
 Future<void> openReleasesPage() =>
     _updateChannel.invokeMethod('openUrl', {'url': releasesPageUrl});
+
+Future<void> openLicensesPage() =>
+    _updateChannel.invokeMethod('openUrl', {'url': licensesPageUrl});

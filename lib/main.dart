@@ -793,7 +793,65 @@ class _TTSPageState extends State<TTSPage> with WidgetsBindingObserver {
   /// 지금 얼마나 쓰고 있는지 보이게 하고, 손으로 지울 수도 있게 한다.
   Widget _voiceRow(void Function(VoidCallback) refresh) {
     final bytes = _voiceBytes;
+
+    /// 지우기 전에 한 번 더 묻는다.
+    ///
+    /// 몇 시간을 들여 쌓인 것이 한 번의 잘못 누름으로 사라지는 자리다.
+    /// 시트 안에 또 시트를 얹으면 어느 쪽 단추인지 헷갈리므로 팝업으로 띄운다.
+    Future<bool> confirm() async {
+      final ok = await showDialog<bool>(
+        context: context,
+        builder: (ctx) => Dialog(
+          backgroundColor: kSteel,
+          shape: const PixelBorder(unit: 5),
+          insetPadding: const EdgeInsets.symmetric(horizontal: 28),
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(20, 22, 20, 20),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Text('ERASE ALL VOICES?',
+                    style: displayStyle(
+                        size: 15, color: kYellow, letterSpacing: 1.8)),
+                const SizedBox(height: 16),
+                Text(
+                  'This deletes every voice made so far'
+                  '${bytes != null && bytes > 0 ? ' (${_mb(bytes)})' : ''}'
+                  ' and where you left off in each text.\n\n'
+                  'Your texts stay. Voices are made again as you read.',
+                  style: const TextStyle(
+                      fontSize: 14, color: kOnSteel, height: 1.45),
+                ),
+                const SizedBox(height: 22),
+                // REMAKE 시트와 같은 4:6 — 물러나는 쪽이 좁다
+                Row(children: [
+                  Expanded(
+                    flex: 4,
+                    child: _sheetButton('CANCEL',
+                        color: kSlate, onTap: () => Navigator.pop(ctx, false)),
+                  ),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    flex: 6,
+                    // 되돌릴 수 없는 쪽이라 붉게 — 노랑은 '해도 좋다' 는 색이다
+                    child: _sheetButton('ERASE',
+                        color: kRed,
+                        labelColor: Colors.white,
+                        onTap: () => Navigator.pop(ctx, true)),
+                  ),
+                ]),
+              ],
+            ),
+          ),
+        ),
+      );
+      return ok == true;
+    }
+
     Future<void> clear() async {
+      if (!await confirm()) return;
+
       await NarrationEngine.clearVoice();
       _engine.resumeAfterCleanup();
 
@@ -1755,8 +1813,12 @@ class _TTSPageState extends State<TTSPage> with WidgetsBindingObserver {
   }
 
   /// 시트 아래에 서는 단추 하나
+  /// [labelColor] 를 주면 글자색을 바꾼다 — 붉은 바탕처럼 바탕이 짙어
+  /// 기본 어두운 글자가 묻히는 자리에 쓴다.
   Widget _sheetButton(String label,
-      {required Color color, required VoidCallback onTap}) {
+      {required Color color,
+      required VoidCallback onTap,
+      Color labelColor = kOnLight}) {
     return PixelCard(
       fill: color,
       padding: const EdgeInsets.symmetric(vertical: 14),
@@ -1764,7 +1826,7 @@ class _TTSPageState extends State<TTSPage> with WidgetsBindingObserver {
       child: Center(
         child: Text(label,
             style: displayStyle(
-                size: 13, color: kOnLight, letterSpacing: 1.6)),
+                size: 13, color: labelColor, letterSpacing: 1.6)),
       ),
     );
   }
@@ -1845,7 +1907,8 @@ class _TTSPageState extends State<TTSPage> with WidgetsBindingObserver {
                     (v) => update(() => _sheet.steps = v.round())),
                 const SizedBox(height: 18),
                 Container(height: 2, color: kLine),
-                const SizedBox(height: 16),
+                // 줄 아래 칸들은 3dp 더 내려 선다 — 줄에 붙어 보였다
+                const SizedBox(height: 19),
                 // 둘 다 짧아서 나란히 놓아도 넉넉하다
                 if (footer != null)
                   footer(ctx)

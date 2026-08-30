@@ -31,7 +31,7 @@
 
 | | |
 |---|---|
-| **에이투지체** — 본문 | [SIL Open Font License 1.1](https://scripts.sil.org/OFL) |
+| [**에이투지체**](https://freesentation.blog/a2z) — 본문 | [SIL Open Font License 1.1](https://scripts.sil.org/OFL) |
 | [**Panchang**](https://www.fontshare.com/fonts/panchang) — Indian Type Foundry, 숫자·표시어 | Fontshare 이용 약관 |
 
 ## 그림

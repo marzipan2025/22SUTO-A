@@ -240,6 +240,16 @@ class _TTSPageState extends State<TTSPage> with WidgetsBindingObserver {
   /// 두 자리의 사정이 서로 다르다.
   static const _faceCanvas = 144.0;
 
+  /// 캐릭터 오른쪽에 손짓만 받는 자리를 더 낸다.
+  ///
+  /// 그림이 캔버스 안에서 왼쪽에 치우쳐 있어, 보이는 것만큼만 받으면
+  /// 누를 자리가 좁다. PLAY 는 맨 오른쪽에 서 있어 겹치지 않는다.
+  ///
+  /// 다만 **화면의 왼쪽 절반을 넘지 않는다.** 얼굴은 화면 왼쪽 6dp 에서
+  /// 시작하므로(바깥 여백 16 + 왼쪽으로 내보낸 -10), 30 을 더하면
+  /// 오른쪽 끝이 6 + 144 + 30 = 180dp — 360dp 화면의 딱 절반이다.
+  static const _faceTapExtra = 30.0;
+
   /// 화면 바깥 여백 (Column 의 좌우 안쪽 여백)
   static const _pagePad = 16.0;
 
@@ -2275,7 +2285,8 @@ class _TTSPageState extends State<TTSPage> with WidgetsBindingObserver {
       children: [
         PixelCard(
           fill: kBoard,
-          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+          // 위아래 0.5dp 씩 — 3배 화면에서 흰 판이 3px 낮아진다
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 11.5),
           child: child,
         ),
         if (face != null)
@@ -2293,12 +2304,20 @@ class _TTSPageState extends State<TTSPage> with WidgetsBindingObserver {
               onTapCancel: () => _setFacePressed(false),
               // 누르는 동안(타임라인을 만질 때도) 옅게 만드는 대신
               // 누른 자세 그림으로 갈아 끼운다.
-              child: Image.asset(
-                face,
-                width: _faceCanvas,
-                // 픽셀 그림이라 매끄럽게 늘이면 뭉갠다
-                filterQuality: FilterQuality.none,
-                isAntiAlias: false,
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.end,
+                children: [
+                  Image.asset(
+                    face,
+                    width: _faceCanvas,
+                    // 픽셀 그림이라 매끄럽게 늘이면 뭉갠다
+                    filterQuality: FilterQuality.none,
+                    isAntiAlias: false,
+                  ),
+                  // 그림은 없고 손짓만 받는 자리
+                  const SizedBox(width: _faceTapExtra),
+                ],
               ),
             ),
           ),

@@ -557,7 +557,7 @@ class _TTSPageState extends State<TTSPage> with WidgetsBindingObserver {
     setState(() => _update = status);
     if (status is UpdateAvailable && !_updateToastShown) {
       _updateToastShown = true;
-      _showToast('새 버전 v${status.latest} 이 있어요 — 설정에서 받으세요');
+      _showToast('v${status.latest} is out — get it in Settings');
     }
   }
 
@@ -603,7 +603,7 @@ class _TTSPageState extends State<TTSPage> with WidgetsBindingObserver {
     } catch (e) {
       _modelDownloading = null;
       _modelError =
-          e is ModelDownloadCancelled ? null : '받지 못했어요 — 다시 눌러 보세요';
+          e is ModelDownloadCancelled ? null : 'Download failed — tap to try again';
       if (e is! ModelDownloadCancelled) logger.w('모델 받기 실패: $e');
       redraw();
     } finally {
@@ -873,7 +873,7 @@ class _TTSPageState extends State<TTSPage> with WidgetsBindingObserver {
       _voiceBytes = b;
       refresh(() {});
       if (mounted) setState(() {});
-      _showToast('만들어둔 음성과 읽던 자리를 지웠어요');
+      _showToast('Voices and reading position erased');
     }
 
     return _sheetOption(
@@ -973,7 +973,7 @@ class _TTSPageState extends State<TTSPage> with WidgetsBindingObserver {
         _downloading = null;
       } catch (e) {
         _downloading = null;
-        _updateError = cancel.isCancelled ? null : '받지 못했어요';
+        _updateError = cancel.isCancelled ? null : 'Download failed';
         logger.w('업데이트 받기 실패: $e');
       }
       _downloadCancel = null;
@@ -1030,7 +1030,7 @@ class _TTSPageState extends State<TTSPage> with WidgetsBindingObserver {
         buttons.add(_sheetTextButton(
           'INSTALL',
           onTap: () => installApk(downloaded).catchError((e) {
-            _updateError = '설치 화면을 열지 못했어요';
+            _updateError = 'Could not open the installer';
             logger.w('설치 실패: $e');
             redraw();
           }),
@@ -1445,7 +1445,7 @@ class _TTSPageState extends State<TTSPage> with WidgetsBindingObserver {
     final data = await Clipboard.getData(Clipboard.kTextPlain);
     final t = (data?.text ?? '').trim();
     if (t.isEmpty) {
-      _showToast('클립보드가 비었어요');
+      _showToast('Clipboard is empty');
       return;
     }
     _addSource(kind: SourceKind.clipboard, text: t);
@@ -1458,7 +1458,7 @@ class _TTSPageState extends State<TTSPage> with WidgetsBindingObserver {
       builder: (ctx) => AlertDialog(
         backgroundColor: kSteel,
         shape: const PixelBorder(unit: 5),
-        title: const Text('삭제할까요?',
+        title: const Text('Delete this?',
             style: TextStyle(fontSize: 18, color: Colors.white)),
         content: Text(
           byWord(item.label.length > 60
@@ -1469,12 +1469,12 @@ class _TTSPageState extends State<TTSPage> with WidgetsBindingObserver {
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(ctx, false),
-            child: const Text('취소',
+            child: const Text('Cancel',
                 style: TextStyle(fontSize: 16, color: kOnSteel)),
           ),
           TextButton(
             onPressed: () => Navigator.pop(ctx, true),
-            child: const Text('삭제',
+            child: const Text('Delete',
                 style: TextStyle(fontSize: 16, color: kYellow)),
           ),
         ],
@@ -1497,6 +1497,93 @@ class _TTSPageState extends State<TTSPage> with WidgetsBindingObserver {
     unawaited(_refreshMade());
   }
 
+  /// 글 하나가 들고 있는 음성만 버린다. **글은 남는다.**
+  ///
+  /// 설정의 ERASE 는 전부를 지운다. 여기는 한 글만이다 — 한 글을 다시
+  /// 들으려고 전부를 버리는 일이 없게 한다.
+  ///
+  /// 팝업 하나가 곁차림이자 확인이다. 곁차림을 띄우고 거기서 또 확인을
+  /// 얹으면 어느 쪽 단추인지 헷갈린다. 담긴 것이 하나뿐이라 그 하나를
+  /// 곧바로 묻는 편이 짧다.
+  Future<void> _clearSourceVoice(SourceItem item) async {
+    final bytes = await NarrationEngine.voiceBytesFor(item.id);
+    if (!mounted) return;
+    if (bytes <= 0) {
+      _showToast('No voices to erase');
+      return;
+    }
+
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => Dialog(
+        backgroundColor: kSteel,
+        shape: const PixelBorder(unit: 5),
+        insetPadding: const EdgeInsets.symmetric(horizontal: 28),
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(20, 22, 20, 20),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Text('ERASE VOICES?',
+                  style: displayStyle(
+                      size: 15, color: kYellow, letterSpacing: 1.8)),
+              const SizedBox(height: 14),
+              // 한 줄이면 된다.
+              //
+              // 글 이름도 용량도 적지 않는다. 누른 카드 위에 뜨는 팝업이라
+              // 어느 글인지는 뒤에 보이고, 얼마인지는 지울지 말지를 정하는
+              // 데 쓰이지 않는다. 설정의 ERASE 는 전부를 지우는 것이라
+              // 용량을 적었지만, 여기는 그 글 하나다.
+              const Text(
+                'This deletes the voices made for this text '
+                'and where you left off in it.',
+                style: TextStyle(
+                    fontSize: 14, color: kOnSteel, height: 1.45),
+              ),
+              const SizedBox(height: 22),
+              // 설정의 ERASE 와 같은 4:6 — 되돌릴 수 없는 쪽이 붉다
+              Row(children: [
+                Expanded(
+                  flex: 4,
+                  child: _sheetButton('CANCEL',
+                      color: kSlate, onTap: () => Navigator.pop(ctx, false)),
+                ),
+                const SizedBox(width: 10),
+                Expanded(
+                  flex: 6,
+                  child: _sheetButton('ERASE',
+                      color: kRed,
+                      labelColor: Colors.white,
+                      onTap: () => Navigator.pop(ctx, true)),
+                ),
+              ]),
+            ],
+          ),
+        ),
+      ),
+    );
+    if (ok != true) return;
+
+    // 지금 읽고 있는 글이면 먼저 멈춘다 — 재생기가 물고 있는 파일을
+    // 발밑에서 지우는 꼴이 된다.
+    if (_engine.sourceId == item.id) await _engine.park();
+    await _engine.dropSource(item.id);
+    _engine.resumeAfterCleanup();
+
+    // 음성을 버렸으면 읽던 자리도 함께 버린다. 그 자리를 가리키던 파일이
+    // 이제 없으므로, 남겨 두면 다시 들어갈 때 없는 파일을 물으러 간다.
+    item.lastIndex = 0;
+    item.lastFilePath = null;
+    await saveSources(_sources);
+    await _refreshMade();
+
+    final b = await NarrationEngine.voiceBytes();
+    if (!mounted) return;
+    setState(() => _voiceBytes = b);
+    _showToast('Voices and reading position erased');
+  }
+
   // ---- 문서 불러오기 (txt·docx·html 등) ----
   Future<void> _pickFile() async {
     if (_pickingFile) return;
@@ -1507,25 +1594,25 @@ class _TTSPageState extends State<TTSPage> with WidgetsBindingObserver {
           .map((k, v) => MapEntry(k.toString(), v));
       if (map['cancelled'] == true) return;
       if (map['ok'] != true) {
-        _showToast(map['error']?.toString() ?? '열 수 없는 파일');
+        _showToast(map['error']?.toString() ?? 'Cannot open this file');
         return;
       }
       final text = map['text']?.toString() ?? '';
       if (text.trim().isEmpty) {
-        _showToast('읽을 글이 없어요');
+        _showToast('Nothing to read');
         return;
       }
-      final name = map['name']?.toString() ?? '문서';
+      final name = map['name']?.toString() ?? 'Document';
       final chars = map['chars'] ?? text.length;
       final note = map['note']?.toString() ?? '';
       // 경로가 아니라 뽑아낸 글을 그대로 저장한다 (원본이 사라져도 남도록)
       _addSource(kind: SourceKind.file, text: text, fileName: name);
       // 파일 이름은 바로 아래 목록에 뜨므로 토스트에서는 뺀다
-      _showToast(note.isNotEmpty ? note : '$chars자 가져왔어요');
+      _showToast(note.isNotEmpty ? note : '$chars characters added');
     } catch (e) {
       // 예외 원문은 로그로만 남긴다 — 토스트에 띄우면 화면을 뒤덮는다
       logger.e('file pick error', error: e);
-      _showToast('열 수 없는 파일');
+      _showToast('Cannot open this file');
     } finally {
       _pickWatchdog?.cancel();
       if (mounted) setState(() => _pickingFile = false);
@@ -1599,7 +1686,7 @@ class _TTSPageState extends State<TTSPage> with WidgetsBindingObserver {
     });
     _jumpToCurrent();
     await _playback.invokeMethod('start', {
-      'text': '읽을 준비 중...',
+      'text': 'Getting ready to read…',
       'progress': '',
     }).catchError((_) => null);
 
@@ -1981,6 +2068,11 @@ class _TTSPageState extends State<TTSPage> with WidgetsBindingObserver {
                     for (final it in _engine.items) it.filePath != null,
                   ],
                   touchHeight: 28,
+                  // 짧은 글은 여기서도 칸 몇 개로 끝나 띠가 어디까지
+                  // 뻗는지 보이지 않았다. 두 문장짜리 글은 화면 왼쪽 끝에
+                  // 점 두 개만 찍힌 꼴이었는데, 여기는 짚어서 자리를 옮기는
+                  // 데라 어디를 짚을 수 있는지가 목록에서보다 더 중요하다.
+                  rest: kMuted,
                   // 쓰는 동안에는 손가락이 가리키는 자리를 보여 준다
                   current: _scrubTo ?? _engine.currentIndex,
                   onSeek: _scrub,
@@ -2021,7 +2113,7 @@ class _TTSPageState extends State<TTSPage> with WidgetsBindingObserver {
     final err = _engine.error;
     if (err != null) return err;
     final status = _engine.status;
-    if (!status.startsWith('재생 중')) return status;
+    if (!status.startsWith(NarrationEngine.statusPlaying)) return status;
     return _playingTitle() ?? status;
   }
 
@@ -2121,7 +2213,7 @@ class _TTSPageState extends State<TTSPage> with WidgetsBindingObserver {
             Padding(
               padding: const EdgeInsets.only(right: 8),
               child:
-                  Text('여는 중', style: displayStyle(size: 12, color: kSlate)),
+                  Text('OPENING', style: displayStyle(size: 12, color: kSlate)),
             ),
           // 설정 — 화면 오른쪽 끝에 붙는다
           _pixelTap(
@@ -2206,7 +2298,7 @@ class _TTSPageState extends State<TTSPage> with WidgetsBindingObserver {
             ],
           ),
           const SizedBox(height: 18),
-          const Text('읽어줄 글을 추가하세요',
+          const Text('Add a text to read',
               style: TextStyle(fontSize: 14, color: kMuted)),
         ],
       ),
@@ -2326,19 +2418,38 @@ class _TTSPageState extends State<TTSPage> with WidgetsBindingObserver {
                   ],
                 ),
               ),
-              // 삭제 (확인 팝업 후 완전 삭제).
-              // 그림 자리는 파일 그림과 똑같이 두고, 손가락 닿을 넓이는
-              // 아래쪽으로만 넓힌다 — 그래야 그림의 y가 흔들리지 않는다.
-              GestureDetector(
-                behavior: HitTestBehavior.opaque,
-                onTap: () => _confirmDelete(s),
-                child: Padding(
-                  padding: const EdgeInsets.only(
-                      left: _iconGap, right: 4, top: _iconTop, bottom: 14),
-                  child: PixelIcon(kGlyphCross,
-                      cell: _iconCell,
-                      color: skin.ink.withValues(alpha: 0.55)),
-                ),
+              // 오른쪽 단추 둘 — 위가 삭제(가위표), 아래가 곁차림(케밥).
+              //
+              // 가위표는 글을 통째로 없애고, 케밥은 만들어둔 음성만 버린다.
+              // 되돌릴 수 없는 정도가 다르니 자리를 나눠 세운다. 둘 다 그림
+              // 자리는 파일 그림과 같은 눈금에 두고, 손가락 닿을 넓이만
+              // 위아래로 넓힌다 — 그래야 그림의 x·y 가 흔들리지 않는다.
+              Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  GestureDetector(
+                    behavior: HitTestBehavior.opaque,
+                    onTap: () => _confirmDelete(s),
+                    child: Padding(
+                      padding: const EdgeInsets.only(
+                          left: _iconGap, right: 4, top: _iconTop, bottom: 8),
+                      child: PixelIcon(kGlyphCross,
+                          cell: _iconCell,
+                          color: skin.ink.withValues(alpha: 0.55)),
+                    ),
+                  ),
+                  GestureDetector(
+                    behavior: HitTestBehavior.opaque,
+                    onTap: () => _clearSourceVoice(s),
+                    child: Padding(
+                      padding: const EdgeInsets.only(
+                          left: _iconGap, right: 4, top: 8, bottom: 8),
+                      child: PixelIcon(kGlyphKebab,
+                          cell: _iconCell,
+                          color: skin.ink.withValues(alpha: 0.55)),
+                    ),
+                  ),
+                ],
               ),
             ],
           ),
@@ -2642,19 +2753,61 @@ class _TTSPageState extends State<TTSPage> with WidgetsBindingObserver {
       // 모델이 없으면 읽을 수가 없다. 멈춰 세우는 대신 받는 자리로 데려간다.
       final needModel = !_modelReady;
 
+      // 이 단추는 진행 화면의 단추와 같은 낱말을 쓴다.
+      //
+      // 전에는 재생 상태를 아예 보지 않고 늘 PLAY 였다. 그래서 읽는 도중에
+      // 뒤로 나오면 맨 아랫줄은 '무엇을 읽는 중' 이라고 적혀 있는데 단추는
+      // PLAY 라고 적혀 있었다 — 한 화면이 스스로 어긋났다. 나와서도 곧바로
+      // 멈출 수 있어야 한다.
+      //
+      // 다만 이 화면의 주어는 엔진이 아니라 **고른 카드** 다. 듣던 글과 고른
+      // 글이 다를 때 그냥 PAUSE 를 띄우면, 눌러서 멈춘 뒤 다시 누를 때
+      // 이어지는 대신 엉뚱한 글이 시작된다. 그 자리에는 물음표를 붙여
+      // '지금 듣던 것이 이걸로 바뀐다' 고 미리 알린다 — 이 앱에서 물음표는
+      // 이미 묻는다는 뜻이다(ERASE VOICES?).
+      final playingId = _engine.sourceId;
+      final sel = _selectedSource;
+      // 물고 있는 글이 있나 — 세워 둔 것도 물고 있는 것이다
+      final live = _engine.isRunning && playingId != null;
+      // 고른 카드가 바로 그 글인가
+      final onSelected = live && sel != null && playingId == sel.id;
+
+      String label;
+      VoidCallback? onTap;
+      if (needModel) {
+        label = 'GET VOICE';
+        onTap = _openModelSheet;
+      } else if (!_ready) {
+        label = 'LOADING';
+        onTap = null;
+      } else if (hasShort) {
+        // 손으로 적어 넣은 것이 있으면 그 뜻이 가장 또렷하다. 읽던 것은
+        // SAY 를 누르는 그 순간에 멎는다.
+        label = 'SAY';
+        onTap = canStart ? _start : null;
+      } else if (onSelected) {
+        label = _engine.isPaused ? 'PLAY' : 'PAUSE';
+        // 세워 둔 것을 이을 때도 재생기를 쓴다. 전에는 여기서 _start 로
+        // 갔는데, 그 길은 '이미 읽는 중' 갈래로 빠져 화면만 들어가고
+        // 소리는 세워 둔 채였다 — PLAY 를 눌러도 아무 소리가 안 났다.
+        onTap = _togglePause;
+      } else if (live && !_engine.isPaused) {
+        label = 'PLAY ?';
+        onTap = canStart ? _start : null;
+      } else {
+        label = 'PLAY';
+        onTap = canStart ? _start : null;
+      }
+
       // 단추는 오른쪽. 왼쪽 바닥은 캐릭터가 선다.
       return _controlBox(
         Row(
           mainAxisAlignment: MainAxisAlignment.end,
           children: [
             _wordAction(
-              label: needModel
-                  ? 'GET VOICE'
-                  : (!_ready ? 'LOADING' : (hasShort ? 'SAY' : 'PLAY')),
+              label: label,
               weight: FontWeight.w700,
-              onTap: needModel
-                  ? _openModelSheet
-                  : (canStart ? _start : null),
+              onTap: onTap,
             ),
           ],
         ),

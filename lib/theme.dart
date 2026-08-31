@@ -471,10 +471,18 @@ class MadeStrip extends StatelessWidget {
         final seek = onSeek;
         if (seek == null) return strip;
 
-        // 누른 자리의 칸 → 그 칸이 맡은 첫 문장
+        // 누른 자리의 칸 → 그 칸이 맡은 첫 문장.
+        //
+        // 칸이 없는 자리([rest] 를 깐 데)는 짚어도 아무 일이 없다. 전에는
+        // 끝 칸으로 붙였는데, 문장이 없는 자리를 눌렀는데 소리가 옮겨
+        // 가는 꼴이었다. 보이는 것과 눌리는 것이 맞아떨어져야 한다.
+        //
+        // 왼쪽으로 넘어가는 것은 붙인다 — 첫 칸 왼쪽은 띠 밖이 아니라
+        // 띠의 시작이고, 쓸어 올 때 거기서 멎으면 손이 걸린다.
         void at(double x) {
-          final k = (x / (cell + gap)).floor().clamp(0, n - 1);
-          seek(k * flags.length ~/ n);
+          final k = (x / (cell + gap)).floor();
+          if (k >= n) return;
+          seek((k < 0 ? 0 : k) * flags.length ~/ n);
         }
 
         void touch(bool down) => onTouch?.call(down);

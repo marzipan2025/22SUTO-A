@@ -158,6 +158,13 @@ class NarrationEngine extends ChangeNotifier {
   bool get isPaused => _userPaused;
   bool get isStalled => _stalled;
   bool get isPlaying => player.playing;
+  /// 재생 중임을 나타내는 상태 문구의 머리.
+  ///
+  /// 화면이 이 문구로 시작하는지를 보고 상태줄에 글 제목을 대신 띄운다.
+  /// 양쪽에 같은 글자를 적어 두면 한쪽만 고쳤을 때 조용히 어긋나므로
+  /// 여기 한 곳에 둔다.
+  static const statusPlaying = 'Playing';
+
   String get status => _status;
   String? get error => _error;
   String get lang => _lang;
@@ -216,7 +223,7 @@ class NarrationEngine extends ChangeNotifier {
   }
 
   Future<void> loadModels() async {
-    _setStatus('음성 엔진 준비 중...');
+    _setStatus('Starting the voice engine…');
     try {
       _tts = await loadTextToSpeech(await onnxDirPath(), useGpu: false);
       await _style('M1');
@@ -225,11 +232,11 @@ class NarrationEngine extends ChangeNotifier {
       // 기다리면 되는 줄 알고 사람이 계속 기다리게 된다. 넘어졌다는 것을
       // 화면에 내놓아야 다시 받아 보든 다시 켜 보든 할 수 있다.
       logger.e('음성 엔진을 세우지 못함', error: e, stackTrace: st);
-      _error = '음성 엔진을 세우지 못했어요 — $e';
+      _error = 'Could not start the voice engine — $e';
       notifyListeners();
       rethrow;
     }
-    _setStatus('준비 완료');
+    _setStatus('Ready');
 
     _watchdog?.cancel();
     _watchdog = Timer.periodic(const Duration(seconds: 2), (_) => _kickIfIdle());
@@ -241,7 +248,7 @@ class NarrationEngine extends ChangeNotifier {
         _finish();
       } else {
         _stalled = true;
-        _setStatus('다음 문장 준비 중...');
+        _setStatus('Making the next sentence…');
       }
     });
   }
@@ -294,7 +301,7 @@ class NarrationEngine extends ChangeNotifier {
 
     final cleaned = cleanText(text).trim();
     if (cleaned.isEmpty) {
-      _setStatus('읽을 글이 없어요.');
+      _setStatus('Nothing to read.');
       return;
     }
 
@@ -306,7 +313,7 @@ class NarrationEngine extends ChangeNotifier {
     // 그래서 앱을 다시 켜도 문장 번호가 그대로라 이어듣기가 성립한다.
     final sentences = splitUnits(cleaned, _lang);
     if (sentences.isEmpty) {
-      _setStatus('읽을 문장이 없어요.');
+      _setStatus('No sentences to read.');
       return;
     }
 
@@ -337,7 +344,7 @@ class NarrationEngine extends ChangeNotifier {
     _stalled = true;
     _warmupTarget = sentences.length < warmupUnits ? sentences.length : warmupUnits;
     _warmOk = false;
-    _setStatus('첫 문장 만드는 중...');
+    _setStatus('Making the first sentence…');
 
     unawaited(_worker(gen));
     unawaited(_pump(gen));
@@ -388,7 +395,7 @@ class NarrationEngine extends ChangeNotifier {
       } catch (_) {}
     });
 
-    _setStatus('정지했어요.');
+    _setStatus('Stopped.');
   }
 
   /// 글을 삭제할 때 — 보관 중인 대기열과 음성 파일 폴더를 통째로 없앤다
@@ -577,7 +584,7 @@ class NarrationEngine extends ChangeNotifier {
       if (_sessionDir == null && id != null) {
         _sessionDir = await _sessionDirFor(id);
       }
-      _setStatus('이어서 준비 중...');
+      _setStatus('Resuming…');
       unawaited(_worker(_generation));
     }
 
@@ -725,7 +732,7 @@ class NarrationEngine extends ChangeNotifier {
       _warmOk = true;
       await _startPlaybackIfReady(gen);
     } else {
-      _setStatus('첫 문장 만드는 중... ($done/$_warmupTarget)');
+      _setStatus('Making the first sentence… ($done/$_warmupTarget)');
     }
   }
 
@@ -742,7 +749,7 @@ class NarrationEngine extends ChangeNotifier {
         final at = player.currentIndex ?? 0;
         if (at >= 0 && at < _playlistMap.length) _markPlaying(_playlistMap[at]);
       }
-      _setStatus('재생 중');
+      _setStatus(statusPlaying);
     } catch (e, st) {
       logger.e('재생 시작 실패', error: e, stackTrace: st);
     }
@@ -871,7 +878,7 @@ class NarrationEngine extends ChangeNotifier {
     // 한 걸음 나아갔으니 그만큼 더 담을 자리가 생겼다
     unawaited(_pump(_generation));
     onSentenceChanged?.call(_items[index]);
-    _setStatus('재생 중 (${index + 1}/${_items.length})');
+    _setStatus('$statusPlaying (${index + 1}/${_items.length})');
   }
 
   void _finish() {
@@ -884,8 +891,8 @@ class NarrationEngine extends ChangeNotifier {
     final failed =
         _items.where((e) => e.status == SentenceStatus.failed).length;
     _setStatus(failed == 0
-        ? '모두 읽었어요 (${_items.length}문장)'
-        : '끝났어요 (${_items.length}문장 중 $failed개 실패)');
+        ? 'All read (${_items.length} sentences)'
+        : 'Done — $failed of ${_items.length} sentences failed');
   }
 
   /// 음성 파일 하나의 이름.
@@ -1107,6 +1114,14 @@ class NarrationEngine extends ChangeNotifier {
     final root = Directory(await _voiceRootPath());
     if (!root.existsSync()) return 0;
     return _dirBytes(root);
+  }
+
+  /// 글 하나가 들고 있는 음성이 몇 바이트인지.
+  /// 그 글의 곁차림에서 '얼마가 지워지는지' 를 적어 주는 데 쓴다.
+  static Future<int> voiceBytesFor(String sourceId) async {
+    final dir = Directory('${await _voiceRootPath()}/$sourceId');
+    if (!dir.existsSync()) return 0;
+    return _dirBytes(dir);
   }
 
   /// 만들어둔 음성을 전부 버린다 (글은 남는다)

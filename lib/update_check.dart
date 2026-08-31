@@ -167,7 +167,7 @@ Future<File> downloadApk(
     final req = await client.getUrl(Uri.parse(url));
     final res = await req.close();
     if (res.statusCode != 200) {
-      throw HttpException('받기 실패 (${res.statusCode})');
+      throw HttpException('Download failed (${res.statusCode})');
     }
 
     final total = res.contentLength;
@@ -207,7 +207,7 @@ class CancelToken {
 class _Cancelled implements Exception {
   const _Cancelled();
   @override
-  String toString() => '받기를 그만뒀다';
+  String toString() => 'Download cancelled';
 }
 
 /// 받아둔 APK 를 시스템 설치 화면에 넘긴다.

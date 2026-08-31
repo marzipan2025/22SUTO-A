@@ -317,7 +317,7 @@ Future<void> downloadModel(
       if (res.statusCode == 200) {
         from = 0;
       } else if (res.statusCode != 206) {
-        throw HttpException('$name 받기 실패 (${res.statusCode})');
+        throw HttpException('$name download failed (${res.statusCode})');
       }
 
       var received = from;
@@ -338,7 +338,7 @@ Future<void> downloadModel(
 
       if (partial.lengthSync() != want.size) {
         partial.deleteSync();
-        throw HttpException('$name 크기가 맞지 않아요');
+        throw HttpException('$name has the wrong size');
       }
       if (dest.existsSync()) dest.deleteSync();
       partial.renameSync(dest.path);
@@ -358,5 +358,5 @@ Future<void> downloadModel(
 class ModelDownloadCancelled implements Exception {
   const ModelDownloadCancelled();
   @override
-  String toString() => '모델 받기를 그만뒀다';
+  String toString() => 'Model download cancelled';
 }

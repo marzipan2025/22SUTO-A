@@ -152,6 +152,18 @@ class NarrationEngine extends ChangeNotifier {
   String? _lastMadeVoice;
   String? get lastMadeVoice => _lastMadeVoice;
 
+  /// 마지막으로 **귀에 닿은** 목소리.
+  ///
+  /// [lastMadeVoice] 와 다르다. 만들기는 재생보다 앞서 달리므로, 지금 F1 을
+  /// 듣고 있는 사이에 만드는 쪽은 벌써 M4 로 넘어가 있을 수 있다. 화면
+  /// 아래 얼굴은 귀가 듣는 것을 따라야 하므로 이쪽을 쓴다.
+  ///
+  /// 만들어둔 것을 되찾아 쓰는 문장은 아예 만들지 않으므로
+  /// [lastMadeVoice] 는 갱신되지 않는다. 그래서 목록으로 나오면 한참 전에
+  /// 만든 얼굴이 서 있었다.
+  String? _lastPlayedVoice;
+  String? get lastPlayedVoice => _lastPlayedVoice;
+
   int get currentIndex => _currentIndex;
   int get synthesizingIndex => _synthesizingIndex;
   bool get isRunning => _running;
@@ -884,6 +896,7 @@ class NarrationEngine extends ChangeNotifier {
       }
     }
     _currentIndex = index;
+    _lastPlayedVoice = _items[index].voice ?? _lastPlayedVoice;
     _stalled = false;
     // 한 걸음 나아갔으니 그만큼 더 담을 자리가 생겼다
     unawaited(_pump(_generation));

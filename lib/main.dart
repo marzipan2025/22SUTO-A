@@ -1211,6 +1211,11 @@ class _TTSPageState extends State<TTSPage> with WidgetsBindingObserver {
   }
 
   void _applySettingsToEngine() {
+    // 목소리를 바꾸면 얼굴도 곧바로 따라와야 한다. 이 값은 '마지막으로 들린
+    // 목소리' 인데, 지금 고른 것이 다음에 들릴 목소리다. 읽는 중이라면
+    // 화면은 재생 중인 문장의 목소리를 그대로 보여 주므로 흔들리지 않는다.
+    _settings.lastVoice = _settings.voice;
+
     // 돌려주는 값(바뀐 설정이 몇 번째 문장부터 먹는지)은 이제 쓰지 않는다.
     // 그 안내를 화면에서 뺐다.
     _engine.setParams(
@@ -1232,16 +1237,17 @@ class _TTSPageState extends State<TTSPage> with WidgetsBindingObserver {
   }
 
   void _onEngineChanged() {
-    // 기계를 돌려 소리를 뽑을 때마다 그 목소리를 설정에 남긴다.
+    // 문장이 하나 지나갈 때마다 **귀에 닿은** 목소리를 설정에 남긴다.
     //
-    // 다음에 앱을 켤 때 첫 화면에 세울 얼굴이다. 설정의 목소리가 아니라
-    // **마지막으로 만든** 목소리라야 한다 — REMAKE 로 문장 하나만 다른
-    // 목소리로 다시 만들면 설정은 그대로인데 마지막으로 쓴 것은 그것이다.
+    // 다음에 앱을 켤 때 첫 화면에 세울 얼굴이다. '마지막으로 만든' 것을
+    // 쓰면 어긋난다 — 만들기는 재생보다 앞서 달리므로, F1 을 듣는 사이에
+    // 만드는 쪽은 벌써 M4 에 가 있다. 게다가 만들어둔 것을 되찾아 쓰는
+    // 문장은 아예 만들지 않아, 한참 전에 만든 얼굴이 그대로 남았다.
     //
     // 바뀔 때만 적는다. 이 알림은 문장마다 여러 번 떨어진다.
-    final made = _engine.lastMadeVoice;
-    if (made != null && made != _settings.lastVoice) {
-      _settings.lastVoice = made;
+    final heard = _engine.lastPlayedVoice;
+    if (heard != null && heard != _settings.lastVoice) {
+      _settings.lastVoice = heard;
       unawaited(saveSettings(_settings));
     }
 
@@ -2089,22 +2095,26 @@ class _TTSPageState extends State<TTSPage> with WidgetsBindingObserver {
     final size = MediaQuery.sizeOf(context);
     // SafeArea 를 쓰지 않는다 — 이름이 서는 자리를 재는 기준이 상태바 아래가
     // 아니라 기기의 맨 위다.
-    // 설정의 목소리가 아니라 **마지막으로 만들어 낸** 목소리다.
-    // 한 번도 만든 적이 없으면 설정의 것으로 세운다.
+    // 설정의 목소리가 아니라 **마지막으로 들린** 목소리다.
+    // 한 번도 들은 적이 없으면 설정의 것으로 세운다.
     final face = _voiceFaces[_settings.lastVoice ?? _settings.voice];
     return Scaffold(
       backgroundColor: kSplashBg,
       body: Stack(
         children: [
+          // 이름은 위에서 35% 자리에 선다. 화면 비율이 달라도 눈에 같은
+          // 높이로 보이도록 픽셀이 아니라 몫으로 잡는다.
           Positioned(
-            top: 0,
+            top: size.height * 0.35,
             left: 0,
             right: 0,
-            height: size.height - size.width,
             child: Center(
               child: Text('SUTO-A',
                   style: displayStyle(
-                      size: 23, color: kOnLight, letterSpacing: 1.2)),
+                      size: 25,
+                      color: kOnLight,
+                      weight: FontWeight.w700,
+                      letterSpacing: 1.2)),
             ),
           ),
           if (face != null)
@@ -2112,17 +2122,21 @@ class _TTSPageState extends State<TTSPage> with WidgetsBindingObserver {
               left: 0,
               right: 0,
               bottom: 0,
-              child: AnimatedOpacity(
-                opacity: _splashFace ? 1 : 0,
-                duration: const Duration(milliseconds: 240),
-                child: Image.asset(
-                  'assets/char/full/$face.png',
-                  width: size.width,
-                  fit: BoxFit.fitWidth,
-                  // 픽셀 그림이라 매끄럽게 늘이면 뭉갠다 — 화면 아래 캐릭터와
-                  // 같은 설정이라야 두 자리의 얼굴이 같아 보인다
-                  filterQuality: FilterQuality.none,
-                  isAntiAlias: false,
+              child: Center(
+                child: AnimatedOpacity(
+                  opacity: _splashFace ? 1 : 0,
+                  duration: const Duration(milliseconds: 240),
+                  child: Image.asset(
+                    'assets/char/full/$face.png',
+                    // 화면 아래 40%(60%~100%)를 키로 삼는다. 비율은 그대로
+                    // 두고 키만 정하므로 폭은 그림이 알아서 따라온다.
+                    height: size.height * 0.40,
+                    fit: BoxFit.fitHeight,
+                    // 픽셀 그림이라 매끄럽게 늘이면 뭉갠다 — 화면 아래 캐릭터와
+                    // 같은 설정이라야 두 자리의 얼굴이 같아 보인다
+                    filterQuality: FilterQuality.none,
+                    isAntiAlias: false,
+                  ),
                 ),
               ),
             ),

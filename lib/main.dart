@@ -288,14 +288,26 @@ class _TTSPageState extends State<TTSPage> with WidgetsBindingObserver {
   ///
   /// 지금 들리는 음성을 만든 목소리를 따른다 — 설정을 바꿔도 이미 만들어
   /// 둔 것은 그대로 쓰므로, 설정만 보면 들리는 것과 어긋난다.
-  /// 아직 아무것도 재생하지 않았으면 설정의 목소리를 보여 준다.
+  ///
+  /// 아무것도 물고 있지 않을 때는 **마지막으로 만들어 낸 목소리**다.
+  /// 켤 때의 첫 화면이 세우는 얼굴과 같은 값이라야 한다 — 다르면 첫 화면이
+  /// 사라지는 그 순간에 얼굴이 바뀌어 이질감이 든다. 설정의 목소리를 쓰면
+  /// 그 자리가 어긋난다: 설정만 바꾸고 아직 만들지 않았을 때, 그리고
+  /// REMAKE 로 한 문장만 다른 목소리로 만들었을 때.
+  ///
+  /// 그래서 설정에서 목소리를 골라도 여기 얼굴은 바로 바뀌지 않는다.
+  /// 실제로 소리를 만들어야 바뀐다. 고르는 동안의 되먹임은 설정 시트 안의
+  /// 얼굴 고르개가 맡는다.
+  ///
+  /// 한 번도 만든 적이 없으면(새로 깐 앱) 설정의 목소리로 선다.
   /// [pressed] 면 누른 자세 그림을 가리킨다.
   ///
   /// 누름 그림은 폭이 원본과 같고 키만 낮다(225x330 → 225x210). 발을
   /// 바닥에 붙여 두므로, 옅게 만드는 대신 이 그림으로 갈아 끼우면
   /// 웅크리는 모습이 된다.
   String? _faceAsset({bool pressed = false}) {
-    final name = _voiceFaces[_engine.playingVoice ?? _settings.voice];
+    final name = _voiceFaces[
+        _engine.playingVoice ?? _settings.lastVoice ?? _settings.voice];
     if (name == null) return null;
     return 'assets/char/full/$name${pressed ? '_press' : ''}.png';
   }

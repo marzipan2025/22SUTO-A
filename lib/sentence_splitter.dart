@@ -159,12 +159,29 @@ List<String> _roughSplit(String text) {
 }
 
 /// maxLen을 넘는 문장을 쉼표 → 띄어쓰기 → 강제 순으로 잘라낸다.
+///
+/// **꼬리를 짧게 남기지 않는다.** 예전에는 한 자라도 넘으면 잘랐다. 그래서
+/// 한국어 상한(120자)을 한두 자 넘긴 문장이
+///
+///   "…데이비드 커퍼필드 식의 너저분한 이야기를 알고 싶을지" / "모른다."
+///
+/// 로 갈라졌다. 뒤 조각은 제 칸을 못 채워 다음 문장 머리에 붙어 엉뚱한
+/// 자리에서 읽히고, 앞 칸은 종결 부호 없이 끝나 소리가 얼버무려진다.
+///
+/// 조금 넘치는 것은 통째로 두는 편이 낫다. [tailMin] 만큼은 넘겨도 자르지
+/// 않는다. 그 안에서는 한 문장이 한 칸에 온전히 담긴다.
+///
+/// 자를 때도 꼬리는 [tailMin] 보다 길게 남는다 — 자르는 자리가 maxLen 안이고
+/// 남는 길이가 rest.length - maxLen 보다 크므로, 반복 조건이 그것을 보장한다.
 List<String> _splitLong(String s, int maxLen) {
-  if (s.length <= maxLen) return [s];
+  // 자르지 않고 넘어가도 되는 여유. 이보다 짧은 꼬리는 남기지 않는다.
+  final tailMin = maxLen ~/ 4;
+
+  if (s.length <= maxLen + tailMin) return [s];
 
   final out = <String>[];
   var rest = s;
-  while (rest.length > maxLen) {
+  while (rest.length > maxLen + tailMin) {
     final window = rest.substring(0, maxLen);
     var cut = -1;
     for (final c in _breakers) {

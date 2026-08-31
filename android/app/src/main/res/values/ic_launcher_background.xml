@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 앞장의 둘레가 비어 있으므로 그 밑을 채우는 색이다. 밑그림의 바탕이
+     흰색이라 여기도 흰색이라야 이음매가 보이지 않는다. -->
+<resources>
+    <color name="ic_launcher_background">#FFFFFF</color>
+</resources>

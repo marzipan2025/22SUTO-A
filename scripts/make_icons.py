@@ -6,11 +6,21 @@
 
     python3 scripts/make_icons.py
 
-뽑는 곳은 네 군데다.
+뽑는 곳은 두 군데다.
 
   assets/icon/app_icon.png                     밑그림 그대로 (flutter_launcher_icons 용)
-  res/drawable-nodpi/splash_logo.png           밑그림 그대로 (시작 화면)
-  res/mipmap-*/ic_launcher.png                 48·72·96·144·192px 로 줄인 것
+  res/mipmap-*/ic_launcher.png                 48·72·96·144·192px (안드로이드 7 이하)
+  res/mipmap-*/ic_launcher_foreground.png      적응형 아이콘의 앞장 (안드로이드 8 이상)
+
+테마 아이콘(런처가 단색으로 씌울 때 쓰는 monochrome 장)은 두지 않는다.
+밑그림이 얼굴을 화면 밖까지 꽉 채운 클로즈업이라, 실루엣을 뽑으면 머리
+모양이 아니라 네모난 덩어리가 된다. 윤곽선만 남겨도 런처가 글리프를 원
+지름의 절반으로 줄여 그리는 자리에서는 잔선이 뭉친다. 여백을 둔 굵은
+도장 그림이 따로 생기면 그때 넣는다.
+
+시작 화면에는 더 이상 넣지 않는다. v0.5.6 부터 첫 화면을 플러터가 직접
+그리므로(캐릭터가 서는 그 화면이다), 안드로이드 쪽 시작 그림은 비워 둔
+splash_none 이다. 여기서 splash_logo.png 를 다시 만들면 죽은 파일만 남는다.
 
 **`dart run flutter_launcher_icons` 를 쓰지 말 것.** 그쪽은 부드럽게 보간해
 줄이는데, 픽셀 그림은 그러면 가장자리가 뭉개져 뿌옇게 나온다. 여기서는
@@ -33,9 +43,17 @@ RES = ROOT / 'android/app/src/main/res'
 
 COPIES = [
     ROOT / 'assets/icon/app_icon.png',
-    RES / 'drawable-nodpi/splash_logo.png',
 ]
 MIPMAPS = {'mdpi': 48, 'hdpi': 72, 'xhdpi': 96, 'xxhdpi': 144, 'xxxhdpi': 192}
+
+# 적응형 아이콘의 앞장. 판은 108dp 인데 런처가 실제로 보여 주는 것은 가운데
+# 72dp 뿐이고, 바깥 18dp 는 모양을 오려내는 여유로 쓰인다. 그림을 판에 꽉
+# 채우면 얼굴이 잘리므로, 가운데 72/108 자리에 앉히고 둘레는 비워 둔다.
+# 그러면 동그란 런처에서도 그림이 원을 꽉 채운다.
+ADAPTIVE = {'mdpi': 108, 'hdpi': 162, 'xhdpi': 216, 'xxhdpi': 324,
+            'xxxhdpi': 432}
+SAFE = 2 / 3  # 108dp 판에서 보이는 몫
+
 
 BPP = 4  # RGBA 8비트
 
@@ -121,6 +139,17 @@ def nearest(px, w, h, size):
     return out
 
 
+def centered(art, art_size, canvas):
+    """투명한 판 한가운데에 그림을 앉힌다."""
+    out = bytearray(canvas * canvas * BPP)
+    off = (canvas - art_size) // 2
+    for y in range(art_size):
+        src = y * art_size * BPP
+        dst = ((y + off) * canvas + off) * BPP
+        out[dst:dst + art_size * BPP] = art[src:src + art_size * BPP]
+    return out
+
+
 def write_png(path, px, w, h=None):
     h = h if h is not None else w
     raw = bytearray()
@@ -161,6 +190,16 @@ def main():
         write_png(dst, nearest(px, w, h, size), size)
         exact = ' (딱 나누어떨어진다)' if w % size == 0 else ''
         print(f'  {size:>3}px → {dst.relative_to(ROOT)}{exact}')
+
+    for bucket, canvas in ADAPTIVE.items():
+        art = int(canvas * SAFE)
+        small = nearest(px, w, h, art)
+        folder = RES / f'mipmap-{bucket}'
+        folder.mkdir(parents=True, exist_ok=True)
+
+        dst = folder / 'ic_launcher_foreground.png'
+        write_png(dst, centered(small, art, canvas), canvas)
+        print(f'  {canvas:>3}px 판에 {art}px → {dst.relative_to(ROOT)}')
 
 
 if __name__ == '__main__':

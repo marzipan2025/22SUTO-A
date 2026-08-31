@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 안드로이드 8 이상은 이 두 장을 겹쳐 런처 모양대로 오려 낸다.
+     이것이 없으면 시스템이 옛 PNG 를 흰 판 안에 줄여 넣어, 동그라미
+     한가운데 작은 사각형으로 보인다. -->
+<adaptive-icon xmlns:android="http://schemas.android.com/apk/res/android">
+    <background android:drawable="@color/ic_launcher_background" />
+    <foreground android:drawable="@mipmap/ic_launcher_foreground" />
+</adaptive-icon>

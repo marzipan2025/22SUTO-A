@@ -144,6 +144,14 @@ class NarrationEngine extends ChangeNotifier {
   String _status = '';
   String? _error;
 
+  /// 마지막으로 **만들어 낸** 목소리. 되찾아 쓴 것은 세지 않는다.
+  ///
+  /// 새로 만든 것이든 REMAKE 로 다시 만든 것이든, 기계를 돌려 소리를 뽑은
+  /// 마지막 한 번이다. 화면은 이것을 저장해 두었다가 다음에 켤 때 첫
+  /// 화면에 그 얼굴을 세운다.
+  String? _lastMadeVoice;
+  String? get lastMadeVoice => _lastMadeVoice;
+
   int get currentIndex => _currentIndex;
   int get synthesizingIndex => _synthesizingIndex;
   bool get isRunning => _running;
@@ -669,6 +677,8 @@ class NarrationEngine extends ChangeNotifier {
         if (item.status == SentenceStatus.synthesizing) {
           item.filePath = path;
           item.voice = voice;
+          // 방금 기계를 돌려 뽑은 목소리다. 디스크에서 되찾은 것과는 다르다.
+          _lastMadeVoice = voice;
           item.status = SentenceStatus.ready;
           // 한 번 쓰고 비운다. 파일이 하나뿐이라 다음에도 이것이 뽑힌다.
           item.forceVoice = null;

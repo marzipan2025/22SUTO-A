@@ -13,6 +13,13 @@ import 'package:suto_a/pixel.dart';
 
 const kBg = Color(0xFF000000);
 
+/// 켤 때의 바탕. 런처 아이콘의 바탕과 같은 색이다.
+///
+/// **android/app/src/main/res/values/colors.xml 의 splash_bg 와 같아야 한다.**
+/// 시스템이 그리는 스플래시와 Flutter 가 그리는 첫 화면이 이 색으로 이어져,
+/// 둘 사이에 이음매가 보이지 않는다. 한쪽만 고치면 켤 때 색이 한 번 튄다.
+const kSplashBg = Color(0xFF6B8C8E);
+
 const kYellow = Color(0xFFEBD93C); // 지금 재생 중 · 주요 표시어
 /// 다 읽은 문장.
 ///

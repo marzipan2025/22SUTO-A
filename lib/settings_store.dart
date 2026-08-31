@@ -22,6 +22,16 @@ class Settings {
   double speed;
   int steps;
 
+  /// 마지막으로 **실제로 만들어 낸** 목소리.
+  ///
+  /// [voice] 는 '다음에 만들 때 쓸 목소리' 이고 이것은 '마지막으로 쓴
+  /// 목소리' 다. 둘은 갈린다 — REMAKE 로 문장 하나만 다른 목소리로 다시
+  /// 만들면 설정은 그대로인데 마지막으로 쓴 것은 그것이다. 켤 때의 첫
+  /// 화면에 세우는 얼굴이 이걸 따른다.
+  ///
+  /// 한 번도 만든 적이 없으면 null 이다. 그때는 [voice] 를 쓴다.
+  String? lastVoice;
+
   static const voices = ['M1', 'M2', 'M3', 'M4', 'M5', 'F1', 'F2', 'F3', 'F4', 'F5'];
 
   /// 값이 이상해도 앱이 멈추지 않도록 허용 범위로 다듬는다
@@ -34,8 +44,13 @@ class Settings {
     steps = steps.clamp(2, 12);
   }
 
-  Map<String, dynamic> toJson() =>
-      {'voice': voice, 'lang': lang, 'speed': speed, 'steps': steps};
+  Map<String, dynamic> toJson() => {
+        'voice': voice,
+        'lang': lang,
+        'speed': speed,
+        'steps': steps,
+        'lastVoice': lastVoice,
+      };
 
   static Settings fromJson(Map<String, dynamic> j) {
     final s = Settings(
@@ -44,6 +59,8 @@ class Settings {
       speed: (j['speed'] is num) ? (j['speed'] as num).toDouble() : 1.05,
       steps: (j['steps'] is num) ? (j['steps'] as num).toInt() : 6,
     );
+    final last = j['lastVoice'];
+    if (last is String && voices.contains(last)) s.lastVoice = last;
     s.clamp();
     return s;
   }

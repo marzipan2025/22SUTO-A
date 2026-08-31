@@ -180,6 +180,20 @@ class _TTSPageState extends State<TTSPage> with WidgetsBindingObserver {
       EdgeInsets.only(left: 12, top: 8, bottom: 8);
 
   Settings _settings = Settings();
+
+  /// 켤 때 보여 주는 첫 화면을 그리는 중인가.
+  ///
+  /// 화면을 하나 더 만든 것이 아니다. 엔진이 설 때까지 어차피 아무것도
+  /// 할 수 없는 몇 초가 있었고, 그동안 목록과 LOADING 이 떠 있었다.
+  /// 그 자리를 대신 쓴다 — 오가는 길은 그대로다.
+  bool _splash = true;
+
+  /// 어느 얼굴을 세울지 알아냈나.
+  ///
+  /// 설정을 읽기 전에는 [_settings.voice] 가 기본값(M1)이라, 그대로 그리면
+  /// 마지막에 쓰던 얼굴이 아닌 것이 한 번 스쳤다가 바뀐다. 알아낸 뒤에
+  /// 옅게 띄운다.
+  bool _splashFace = false;
   bool _ready = false;
 
   // ---- 새 버전 ----
@@ -472,7 +486,7 @@ class _TTSPageState extends State<TTSPage> with WidgetsBindingObserver {
     // 앱을 켰을 때의 기본 선택은 '맨 나중에 추가한 것'
     _selectedId = _sources.isNotEmpty ? _sources.last.id : null;
 
-    if (mounted) setState(() {});
+    if (mounted) setState(() => _splashFace = true);
 
     // 목록에 남은 글의 음성은 그대로 두고, 없어진 글의 것만 버린다.
     // 총량이 넘치면 오래전에 넣은 글부터 (목록 앞쪽이 오래된 것이다).
@@ -494,13 +508,19 @@ class _TTSPageState extends State<TTSPage> with WidgetsBindingObserver {
     // 먼저 받자고 청한다.
     if (!await modelInstalled()) {
       if (!mounted) return;
-      setState(() => _modelReady = false);
+      // 모델부터 받아야 한다. 첫 화면을 걷어야 그 위에 안내를 띄울 수 있다.
+      setState(() {
+        _modelReady = false;
+        _splash = false;
+      });
       _openModelSheet();
       return;
     }
     if (mounted) setState(() => _modelReady = true);
 
     await _startEngine();
+    // 엔진을 세우다 넘어졌어도 걷는다. 넘어졌다는 것은 아래 줄이 말한다.
+    if (mounted) setState(() => _splash = false);
   }
 
   /// 모델을 다 갖춘 뒤 엔진을 세운다.
@@ -1200,6 +1220,19 @@ class _TTSPageState extends State<TTSPage> with WidgetsBindingObserver {
   }
 
   void _onEngineChanged() {
+    // 기계를 돌려 소리를 뽑을 때마다 그 목소리를 설정에 남긴다.
+    //
+    // 다음에 앱을 켤 때 첫 화면에 세울 얼굴이다. 설정의 목소리가 아니라
+    // **마지막으로 만든** 목소리라야 한다 — REMAKE 로 문장 하나만 다른
+    // 목소리로 다시 만들면 설정은 그대로인데 마지막으로 쓴 것은 그것이다.
+    //
+    // 바뀔 때만 적는다. 이 알림은 문장마다 여러 번 떨어진다.
+    final made = _engine.lastMadeVoice;
+    if (made != null && made != _settings.lastVoice) {
+      _settings.lastVoice = made;
+      unawaited(saveSettings(_settings));
+    }
+
     if (mounted) setState(() {});
     // 스크롤은 다음 프레임에 맡긴다. 이 알림은 재생기·합성기 어디서든
     // 날아와 화면을 다시 짜는 중간에 떨어질 수 있는데, 그때 목록을
@@ -2028,9 +2061,69 @@ class _TTSPageState extends State<TTSPage> with WidgetsBindingObserver {
     });
   }
 
+  /// 켤 때의 첫 화면.
+  ///
+  /// 시스템 스플래시는 바탕색만 남기고 비워 두었다(values-v31/styles.xml).
+  /// 그 색과 여기 바탕이 같아 두 화면이 한 장으로 이어지고, 그 위에 얼굴과
+  /// 이름만 옅게 떠오른다.
+  ///
+  /// 얼굴 그림은 3072 정사각 캔버스이고 그림이 캔버스 바닥에 닿아 있다.
+  /// 그래서 **폭을 화면 폭에 맞춰 바닥에 붙이면** 캐릭터가 화면 바닥에
+  /// 그대로 선다. 알파가 있어 바탕이 그대로 비친다 — 네모가 보이지 않는다.
+  ///
+  /// 이름은 캔버스 윗선과 화면 위의 한가운데에 놓는다. 캔버스가 정사각이라
+  /// 그 윗선은 '화면 높이 − 화면 폭' 이고, 그 위 칸의 가운데다.
+  Widget _splashScreen() {
+    final size = MediaQuery.sizeOf(context);
+    // SafeArea 를 쓰지 않는다 — 이름이 서는 자리를 재는 기준이 상태바 아래가
+    // 아니라 기기의 맨 위다.
+    // 설정의 목소리가 아니라 **마지막으로 만들어 낸** 목소리다.
+    // 한 번도 만든 적이 없으면 설정의 것으로 세운다.
+    final face = _voiceFaces[_settings.lastVoice ?? _settings.voice];
+    return Scaffold(
+      backgroundColor: kSplashBg,
+      body: Stack(
+        children: [
+          Positioned(
+            top: 0,
+            left: 0,
+            right: 0,
+            height: size.height - size.width,
+            child: Center(
+              child: Text('SUTO-A',
+                  style: displayStyle(
+                      size: 23, color: kOnLight, letterSpacing: 1.2)),
+            ),
+          ),
+          if (face != null)
+            Positioned(
+              left: 0,
+              right: 0,
+              bottom: 0,
+              child: AnimatedOpacity(
+                opacity: _splashFace ? 1 : 0,
+                duration: const Duration(milliseconds: 240),
+                child: Image.asset(
+                  'assets/char/full/$face.png',
+                  width: size.width,
+                  fit: BoxFit.fitWidth,
+                  // 픽셀 그림이라 매끄럽게 늘이면 뭉갠다 — 화면 아래 캐릭터와
+                  // 같은 설정이라야 두 자리의 얼굴이 같아 보인다
+                  filterQuality: FilterQuality.none,
+                  isAntiAlias: false,
+                ),
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+
   // ---------------------------------------------------------------- UI
   @override
   Widget build(BuildContext context) {
+    if (_splash) return _splashScreen();
+
     // 진행 화면에서 시스템 뒤로가기를 누르면 앱이 꺼지지 않고 입력 화면으로만 간다.
     // 합성·재생은 그대로 이어진다. 입력 화면에서는 평소대로 앱을 빠져나간다.
     return PopScope(

@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 스플래시에 아무것도 그리지 않기 위한 투명 드로어블.
+
+     API 31+ 에서는 시스템이 스플래시를 그리고, windowSplashScreenAnimatedIcon 을
+     비워 두면 런처 아이콘을 대신 가운데에 띄운다. 아이콘 칸은 가운데 고정에
+     원형 마스크라 원하는 자리에 놓을 수 없다.
+
+     첫 화면은 Flutter 가 그린다(lib/main.dart 의 _splashScreen). 시스템 쪽은
+     바탕색만 남기고 비워, 두 화면이 한 장으로 이어지게 한다. -->
+<shape xmlns:android="http://schemas.android.com/apk/res/android"
+    android:shape="rectangle">
+    <solid android:color="@android:color/transparent" />
+</shape>

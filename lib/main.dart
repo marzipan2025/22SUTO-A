@@ -2314,6 +2314,13 @@ class _TTSPageState extends State<TTSPage> with WidgetsBindingObserver {
                         flags: _made[s.id]!,
                         // 고른 카드는 바탕이 노랑이라 같은 노랑이 묻힌다
                         on: selected ? kMadeOnYellow : kYellow,
+                        // 짧은 글이라 칸이 폭에 못 닿으면 남는 자리를 깐다.
+                        //
+                        // 가라앉은 색이라야 한다. 밝은 청회색(kSlate)으로
+                        // 깔아 보니 깔개가 만들어둔 칸보다 먼저 눈에 들어와,
+                        // 없는 자리가 있는 자리를 눌렀다. 여기서 할 일은
+                        // 띠의 길이를 알려 주는 것뿐이다.
+                        rest: kMuted,
                       ),
                     ],
                   ],

@@ -402,6 +402,7 @@ class MadeStrip extends StatelessWidget {
     this.gap = 1,
     this.on = kYellow,
     this.off = kBg,
+    this.rest,
     this.onSeek,
     this.onTouch,
     this.touchHeight = 0,
@@ -417,6 +418,20 @@ class MadeStrip extends StatelessWidget {
   /// 만들어 둔 칸 / 아직인 칸
   final Color on;
   final Color off;
+
+  /// 칸이 미처 닿지 못한 오른쪽 자리를 깔 색.
+  ///
+  /// 문장이 일곱인 짧은 글은 띠가 카드 폭의 일부만 쓰고 끝난다. 그러면 어디
+  /// 까지가 띠인지 알 수 없어 게이지로 읽히지 않는다 — 다 만들어 둔 짧은 글과
+  /// 이제 막 시작한 긴 글이 같은 길이로 보인다. 남는 자리를 옅게 깔아 두면
+  /// 띠의 길이가 늘 같고, 그 안에서 어디까지 왔는지가 드러난다.
+  ///
+  /// 아직 안 만든 칸([off])과는 다른 색이라야 한다. 하나는 '만들 것이 있는데
+  /// 아직 없다' 이고 하나는 '여기엔 문장이 없다' 다.
+  ///
+  /// null 이면 깔지 않는다 — 진행 화면의 타임라인은 문장이 늘 폭을 넘어
+  /// 남는 자리가 없다.
+  final Color? rest;
 
   /// 넘기면 띠를 눌러 그 자리로 갈 수 있다. 누른 칸이 맡은 첫 문장 번호가 온다.
   ///
@@ -449,7 +464,8 @@ class MadeStrip extends StatelessWidget {
         final strip = Center(
           child: CustomPaint(
             size: Size(c.maxWidth, cell),
-            painter: _StripPainter(flags, fit, cell, gap, on, off, current),
+            painter:
+                _StripPainter(flags, fit, cell, gap, on, off, rest, current),
           ),
         );
         final seek = onSeek;
@@ -488,7 +504,7 @@ class MadeStrip extends StatelessWidget {
 
 class _StripPainter extends CustomPainter {
   _StripPainter(this.flags, this.fit, this.cell, this.gap, this.on, this.off,
-      this.current);
+      this.rest, this.current);
 
   final List<bool> flags;
   final int fit;
@@ -496,6 +512,7 @@ class _StripPainter extends CustomPainter {
   final double gap;
   final Color on;
   final Color off;
+  final Color? rest;
   final int? current;
 
   @override
@@ -525,6 +542,28 @@ class _StripPainter extends CustomPainter {
         k == at ? here : (any ? lit : dark),
       );
     }
+
+    // 문장이 폭보다 적으면 남는 칸을 깔아 띠의 길이를 늘 같게 한다.
+    //
+    // 1.5dp 로 낮게, **밑선에 맞춰** 긋는다. 문장이 있는 칸(만들었든
+    // 아직이든)은 5dp 정사각형이라, 키만 봐도 '여기엔 문장이 있다' 와
+    // '여기는 글 밖이다' 가 갈린다. 같은 키로 깔았더니 없는 자리가 있는
+    // 자리처럼 보였다.
+    //
+    // 가운데에 걸치면 위아래로 떠서 어느 줄에 선 것인지 흐려진다. 밑선을
+    // 함께 쓰면 칸이 그 위에 서 있고 깔개는 바닥만 남은 꼴이 된다.
+    //
+    // 반 높이(2.5)로도 아직 두꺼웠다. 여기서 할 일은 띠가 어디까지 뻗는지
+    // 알려 주는 것뿐이므로, 눈에 걸리지 않을 만큼만 남긴다.
+    const restHeight = 1.5;
+    final r = rest;
+    if (r == null) return;
+    final pad = Paint()..color = r;
+    const h = restHeight;
+    final top = cell - h;
+    for (var k = n; k < fit; k++) {
+      canvas.drawRect(Rect.fromLTWH(k * (cell + gap), top, cell, h), pad);
+    }
   }
 
   @override
@@ -533,6 +572,7 @@ class _StripPainter extends CustomPainter {
       old.fit != fit ||
       old.on != on ||
       old.off != off ||
+      old.rest != rest ||
       old.cell != cell ||
       !listEquals(old.flags, flags);
 }

@@ -1872,8 +1872,9 @@ class _TTSPageState extends State<TTSPage> with WidgetsBindingObserver {
           }
 
           return Padding(
+            // 아래 여백은 39 — 51 에서 12 를 덜었다.
             padding: EdgeInsets.fromLTRB(
-                20, 16, 20, MediaQuery.of(ctx).viewInsets.bottom + 51),
+                20, 16, 20, MediaQuery.of(ctx).viewInsets.bottom + 39),
             child: Column(
               mainAxisSize: MainAxisSize.min,
               crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -2244,8 +2245,15 @@ class _TTSPageState extends State<TTSPage> with WidgetsBindingObserver {
         final selected = s.id == _selectedId;
         final isFile = s.kind == SourceKind.file;
 
-        // 고른 글만 노란 카드. 나머지는 가라앉혀 둔다.
-        final skin = selected ? kSkinPlaying : kSkinPending;
+        // 고른 글만 노란 카드. 나머지는 가라앉히되, 붙여넣은 글과 파일을
+        // 색으로 가른다 — 밝기는 같고 온도만 다르다.
+        //
+        // 고른 카드는 어느 쪽이든 노랑이다. 여기서까지 갈라 놓으면 '고른 것'
+        // 이라는 표시가 두 색으로 흩어진다. 어디서 온 글인지는 카드 왼쪽
+        // 그림이 계속 말해 준다.
+        final skin = selected
+            ? kSkinPlaying
+            : (isFile ? kSkinFile : kSkinQuote);
 
         // 진행 화면의 문장 카드와 같은 짜임 — 그림이 왼쪽, 글이 그 오른쪽에서
         // 그림 윗선에 맞춰 시작한다. 지우기 가위표도 같은 눈금·같은 높이.

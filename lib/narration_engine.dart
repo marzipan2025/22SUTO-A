@@ -217,8 +217,18 @@ class NarrationEngine extends ChangeNotifier {
 
   Future<void> loadModels() async {
     _setStatus('음성 엔진 준비 중...');
-    _tts = await loadTextToSpeech(await onnxDirPath(), useGpu: false);
-    await _style('M1');
+    try {
+      _tts = await loadTextToSpeech(await onnxDirPath(), useGpu: false);
+      await _style('M1');
+    } catch (e, st) {
+      // 여기서 넘어지면 화면은 '준비 중...' 에 선 채로 영영 멈춰 있었다.
+      // 기다리면 되는 줄 알고 사람이 계속 기다리게 된다. 넘어졌다는 것을
+      // 화면에 내놓아야 다시 받아 보든 다시 켜 보든 할 수 있다.
+      logger.e('음성 엔진을 세우지 못함', error: e, stackTrace: st);
+      _error = '음성 엔진을 세우지 못했어요 — $e';
+      notifyListeners();
+      rethrow;
+    }
     _setStatus('준비 완료');
 
     _watchdog?.cancel();

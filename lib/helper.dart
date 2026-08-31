@@ -2,6 +2,7 @@ import 'dart:io';
 import 'dart:convert';
 import 'dart:math' as math;
 import 'dart:typed_data';
+import 'package:flutter/foundation.dart' show kDebugMode;
 import 'package:flutter/services.dart' show rootBundle;
 import 'package:flutter_onnxruntime/flutter_onnxruntime.dart';
 import 'package:logger/logger.dart';
@@ -9,7 +10,23 @@ import 'package:path_provider/path_provider.dart';
 
 import 'update_check.dart' show buildStamp;
 
+/// 릴리스에서도 경고와 오류만은 남긴다.
+///
+/// logger 의 기본 필터([DevelopmentFilter])는 디버그 빌드에서만 찍는다.
+/// 그래서 폰에 깔린 앱이 넘어져도 logcat 에 한 줄도 남지 않아, 무슨 일이
+/// 있었는지 알 길이 없었다 — 모델을 세우다 넘어진 자리를 찾는 데 이것이
+/// 가장 큰 걸림돌이었다.
+///
+/// 시시콜콜한 것(d·i)은 그대로 디버그에서만 본다. 릴리스에서 늘 찍으면
+/// 문장마다 로그가 쌓여 정작 봐야 할 것이 묻힌다.
+class _WarningsInRelease extends LogFilter {
+  @override
+  bool shouldLog(LogEvent event) =>
+      kDebugMode || event.level.index >= Level.warning.index;
+}
+
 final logger = Logger(
+  filter: _WarningsInRelease(),
   printer: PrettyPrinter(methodCount: 0, errorMethodCount: 5, lineLength: 80),
 );
 
@@ -703,14 +720,27 @@ Future<Map<String, OrtSession>> _loadOnnxAll(String dir, String stamp) async {
   final options = await _bestSessionOptions(ort);
 
   final sessions = await Future.wait(models.map((name) async {
+    // [copyModelToFile] 은 어느 쪽이든 **파일 경로**를 돌려준다 — 앱 밖에
+    // 받아 둔 모델은 이미 파일이고, 앱에 든 것은 꺼내 놓은 자리다.
+    //
+    // 그러므로 여는 것도 파일을 여는 [OnnxRuntime.createSession] 이라야 한다.
+    // createSessionFromAsset 은 이름 그대로 인자를 **애셋 이름**으로 알아듣고
+    // rootBundle 에 물으러 간다. 모델을 APK 밖으로 뺀 v0.5.0 이후로는
+    // 여기에 절대경로가 들어오므로 "Unable to load asset" 으로 넘어진다.
+    //
+    // 그런데도 한동안 굴러갔던 것은, 애셋으로 넣던 시절에 임시 폴더로 꺼내
+    // 둔 모델이 폰에 남아 있었기 때문이다. 그 패키지는 애셋을 꺼내기 전에
+    // '임시폴더/파일이름' 이 이미 있는지 보는데, 옛 파일이 거기 걸려서
+    // 넘긴 경로는 쓰이지도 않은 채 세션이 열렸다. 앱을 지우면 그 캐시가
+    // 사라지므로, 새로 까는 사람에게는 처음부터 서지 않는 앱이었다.
     final path = await copyModelToFile('$dir/$name.onnx', stamp);
     logger.d('Loading $name.onnx');
     try {
-      return await ort.createSessionFromAsset(path, options: options);
+      return await ort.createSession(path, options: options);
     } catch (e) {
       // 가속기를 못 쓰는 기기라면 기본 설정으로 되돌린다
       logger.w('가속 설정 실패 → 기본 설정으로 재시도: $e');
-      return await ort.createSessionFromAsset(path);
+      return await ort.createSession(path);
     }
   }));
 

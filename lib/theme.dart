@@ -9,12 +9,19 @@ import 'package:suto_a/pixel.dart';
 /// 문장이 어디까지 왔는지를 그대로 나타낸다 — 어두운 데서 시작해
 /// 밝아졌다가, 다 읽고 나면 다시 가라앉는다.
 ///
-///   대기(steel) → 합성 중(rust) → 준비됨(slate) → 재생 중(yellow) → 완료(olive)
+///   대기(steel) → 합성 중(rust) → 준비됨(slate) → 재생 중(yellow) → 완료(ash)
 
 const kBg = Color(0xFF000000);
 
 const kYellow = Color(0xFFEBD93C); // 지금 재생 중 · 주요 표시어
-const kOlive = Color(0xFF8A7A17); // 다 읽은 문장
+/// 다 읽은 문장.
+///
+/// 겨자색이었다. 다 읽은 카드가 목록을 채우고 나면 화면이 온통 노랗고,
+/// 지금 재생 중인 [kYellow] 와 한 계통이라 어디가 '지금' 인지 흐려졌다.
+/// 색을 빼서 가라앉힌다 — 끝난 것은 색을 가질 이유가 없다.
+/// 밝기는 [kMuted] 언저리에 둬서 아직 차례가 오지 않은 [kSteel] 보다는
+/// 확실히 위에 선다.
+const kAsh = Color(0xFF5F5F5F);
 const kRust = Color(0xFFA93C0B); // 만드는 중
 const kSlate = Color(0xFF7A959B); // 대시보드 · 다음 차례
 const kSteel = Color(0xFF35423F); // 아직 차례가 오지 않은 문장
@@ -26,8 +33,23 @@ const kOnLight = Color(0xFF0A0A0A);
 
 /// 어두운 카드 위에 얹는 글자
 const kOnSteel = Color(0xFF93A6A2);
-const kOnOlive = Color(0xFFD5C86B);
+/// 회색 카드 위의 글자. 겨자 위의 겨자빛 글씨는 대비가 2.5 밖에 안 돼
+/// 다 읽은 문장을 되짚어 읽기가 어려웠다. 5.0 으로 올린다.
+const kOnAsh = Color(0xFFE4E4E4);
 const kOnRust = Color(0xFFF4C9A8);
+
+/// 입력 화면 목록에서 글이 어디서 왔는지 가르는 두 색.
+///
+/// 그림(집게·파일)만으로는 목록을 훑을 때 눈에 걸리지 않아, 카드 바탕으로도
+/// 가른다. **밝기와 채도는 같게 두고 색만 돌렸다** — 둘 다 HSL 로 L 23.3%,
+/// S 17.6% 이고 색상만 28.6°(따뜻한 쪽)와 211.4°(찬 쪽)로 마주 본다.
+/// 한쪽이 더 밝거나 진해 보이면 그게 '고른 카드' 처럼 읽히므로,
+/// 무게는 똑같아야 하고 다른 것은 온도뿐이어야 한다.
+///
+/// 밝기는 예전 [kSteel] 과 같은 자리에 두었다. 카드가 목록에서 갖는 무게는
+/// 그대로고, 색만 갈라진다.
+const kQuote = Color(0xFF463B31); // 붙여넣은 글
+const kFile = Color(0xFF313B46); // 파일에서 뽑아낸 글
 
 /// 카드 밖, 바탕 위에 바로 놓이는 보조 글자
 const kMuted = Color(0xFF5C6664);
@@ -47,10 +69,15 @@ class CardSkin {
 }
 
 const kSkinPending = CardSkin(kSteel, kOnSteel);
+
+/// 입력 화면 목록의 두 카드. 글자는 [kOnSteel] 을 그대로 쓴다 —
+/// 채도가 10% 도 안 되는 거의 무채색이라 따뜻한 쪽에도 찬 쪽에도 얹힌다.
+const kSkinQuote = CardSkin(kQuote, kOnSteel);
+const kSkinFile = CardSkin(kFile, kOnSteel);
 const kSkinSynth = CardSkin(kRust, kOnRust);
 const kSkinReady = CardSkin(kSlate, kOnLight);
 const kSkinPlaying = CardSkin(kYellow, kOnLight);
-const kSkinDone = CardSkin(kOlive, kOnOlive);
+const kSkinDone = CardSkin(kAsh, kOnAsh);
 const kSkinFailed = CardSkin(kRed, Color(0xFFFFE3DE));
 
 /// 계단 모서리의 한 칸 크기. 앱 전체가 같은 눈금을 쓴다.

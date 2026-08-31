@@ -1906,10 +1906,17 @@ class _TTSPageState extends State<TTSPage> with WidgetsBindingObserver {
                 _slider('QUALITY', '${_sheet.steps}',
                     _sheet.steps.toDouble(), 2, 12,
                     (v) => update(() => _sheet.steps = v.round())),
-                const SizedBox(height: 18),
+                // QUALITY 와 구분선 사이 18 + 4. 여기를 벌리면 줄과 그 아래
+                // 칸들이 통째로 4dp 내려간다 — 줄 아래의 간격은 그대로 둔 채
+                // 덩어리째 옮기는 자리다.
+                const SizedBox(height: 22),
                 Container(height: 2, color: kLine),
-                // 줄 아래 칸들은 3dp 더 내려 선다 — 줄에 붙어 보였다
-                const SizedBox(height: 19),
+                // 줄 아래 칸들은 3dp 더 내려 선다 — 줄에 붙어 보였다.
+                //
+                // REMAKE 는 여기에 2dp 를 더 준다. 그 아래에 서는 것이 글줄이
+                // 아니라 단추 두 개라 덩어리가 무겁고, 설정과 같은 간격으로
+                // 두면 줄에 더 붙어 보인다.
+                SizedBox(height: footer != null ? 21 : 19),
                 // 둘 다 짧아서 나란히 놓아도 넉넉하다
                 if (footer != null)
                   footer(ctx)

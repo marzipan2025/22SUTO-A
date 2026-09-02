@@ -1,7 +1,7 @@
 name: suto_a
 description: "22SUTO-A — Supertonic 3 on-device TTS for Android"
 publish_to: 'none'
-version: 0.5.9+51
+version: 0.5.10+52
 
 environment:
   sdk: ^3.5.0
@@ -33,6 +33,10 @@ flutter:
     # 이제 lib/model_store.dart 가 Hugging Face 에서 따로 받아 둔다.
     - assets/char/
     - assets/char/full/
+    # 첫 화면의 로고. 원본은 같은 폴더의 splash_title.svg 인데, 40px 격자
+    # 위의 사각형뿐이라 13x9 픽셀 PNG 로 그대로 옮겼다 — svg 를 읽는 짐을
+    # 지지 않고도 어느 크기로 키우든 픽셀이 또렷하다(FilterQuality.none).
+    - assets/logo/
   fonts:
     # 에이투지체 SemiBold — 본문 기본 글꼴. 한 벌만 넣는다.
     # 한글 11,172자를 모두 덮는다. 굵기를 나누지 않으므로 본문 어디에도

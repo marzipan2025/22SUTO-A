@@ -2091,6 +2091,13 @@ class _TTSPageState extends State<TTSPage> with WidgetsBindingObserver {
   ///
   /// 이름은 캔버스 윗선과 화면 위의 한가운데에 놓는다. 캔버스가 정사각이라
   /// 그 윗선은 '화면 높이 − 화면 폭' 이고, 그 위 칸의 가운데다.
+  /// 첫 화면에서 캐릭터가 차지하는 키 — 화면 높이의 몫.
+  ///
+  /// 로고가 설 자리를 여기서 끌어다 쓴다. 로고는 화면 맨 위와 그림 윗선의
+  /// 한가운데인데, 그림 윗선이 곧 '1 − 이 값' 이다. 한쪽만 고치면 로고가
+  /// 가운데를 벗어나므로 숫자를 두 군데 적지 않는다.
+  static const _splashFaceHeight = 0.40;
+
   Widget _splashScreen() {
     final size = MediaQuery.sizeOf(context);
     // SafeArea 를 쓰지 않는다 — 이름이 서는 자리를 재는 기준이 상태바 아래가
@@ -2102,19 +2109,27 @@ class _TTSPageState extends State<TTSPage> with WidgetsBindingObserver {
       backgroundColor: kSplashBg,
       body: Stack(
         children: [
-          // 이름은 위에서 35% 자리에 선다. 화면 비율이 달라도 눈에 같은
-          // 높이로 보이도록 픽셀이 아니라 몫으로 잡는다.
+          // 로고는 화면 맨 위와 그림 윗선 사이의 한가운데에 선다.
+          // 상태바 아래가 아니라 기기의 맨 위가 기준이라 SafeArea 를 쓰지 않는다.
           Positioned(
-            top: size.height * 0.35,
+            top: 0,
             left: 0,
             right: 0,
+            height: size.height * (1 - _splashFaceHeight),
             child: Center(
-              child: Text('SUTO-A',
-                  style: displayStyle(
-                      size: 25,
-                      color: kOnLight,
-                      weight: FontWeight.w700,
-                      letterSpacing: 1.2)),
+              // 폭은 화면의 3분의 1. 13x9 픽셀 그림이라 매끄럽게 늘이면
+              // 뭉개진다 — 캐릭터와 같은 설정으로 둔다.
+              child: Image.asset(
+                'assets/logo/splash_title.png',
+                width: size.width / 3,
+                // fit 을 주지 않으면 BoxFit.scaleDown 으로 그린다 — 상자보다
+                // 작은 그림은 키우지 않고 원본 크기(13x9dp)로 가운데 찍힌다.
+                // 폭을 정해 놓고도 그림이 안 커지던 이유가 이것이었다.
+                fit: BoxFit.contain,
+                // 픽셀 그림이라 매끄럽게 늘이면 뭉개진다
+                filterQuality: FilterQuality.none,
+                isAntiAlias: false,
+              ),
             ),
           ),
           if (face != null)
@@ -2128,9 +2143,9 @@ class _TTSPageState extends State<TTSPage> with WidgetsBindingObserver {
                   duration: const Duration(milliseconds: 240),
                   child: Image.asset(
                     'assets/char/full/$face.png',
-                    // 화면 아래 40%(60%~100%)를 키로 삼는다. 비율은 그대로
-                    // 두고 키만 정하므로 폭은 그림이 알아서 따라온다.
-                    height: size.height * 0.40,
+                    // 화면 아래 [_splashFaceHeight] 만큼을 키로 삼는다. 비율은
+                    // 그대로 두고 키만 정하므로 폭은 그림이 알아서 따라온다.
+                    height: size.height * _splashFaceHeight,
                     fit: BoxFit.fitHeight,
                     // 픽셀 그림이라 매끄럽게 늘이면 뭉갠다 — 화면 아래 캐릭터와
                     // 같은 설정이라야 두 자리의 얼굴이 같아 보인다

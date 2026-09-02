@@ -38,6 +38,13 @@ const kSteel = Color(0xFF35423F); // 아직 차례가 오지 않은 문장
 const kBoard = Color(0xFFFFFFFF); // 진행 화면 맨 윗줄 — 지금 어디까지 왔는지
 const kRed = Color(0xFFD8341F); // 실패
 
+/// 지금 서 있는 자리 — 타임라인에서 그 칸 하나.
+///
+/// 흰색이었는데, 만들어 둔 칸([kYellow])도 아직인 칸도 밝은 자리라
+/// 그 사이에서 흰 칸 하나가 묻혔다. 띠에서 유일하게 '여기' 를 가리키는
+/// 표시라 색으로 따로 서야 한다. 첫 화면 로고에도 쓰는 주황이다.
+const kNow = Color(0xFFF95100);
+
 /// 밝은 카드 위에 얹는 글자 — 바탕과 같은 검정
 const kOnLight = Color(0xFF0A0A0A);
 
@@ -449,7 +456,7 @@ class MadeStrip extends StatelessWidget {
   /// 말해 주고, 이 띠는 어디에 무엇이 있는지를 보여 주는 자리다.
   final void Function(int index)? onSeek;
 
-  /// 지금 서 있는 문장. 그 칸만 흰빛으로 세운다.
+  /// 지금 서 있는 문장. 그 칸만 [kNow] 로 세운다.
   final int? current;
 
   /// 손가락이 띠에 닿아 있는 동안 참으로 알린다. 띠를 만지는 사이에는
@@ -538,7 +545,7 @@ class _StripPainter extends CustomPainter {
     final n = flags.length < fit ? flags.length : fit;
     final lit = Paint()..color = on;
     final dark = Paint()..color = off;
-    final here = Paint()..color = Colors.white;
+    final here = Paint()..color = kNow;
     // 지금 서 있는 문장이 든 칸
     final at = current == null || flags.isEmpty
         ? -1

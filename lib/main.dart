@@ -2547,6 +2547,16 @@ class _TTSPageState extends State<TTSPage> with WidgetsBindingObserver {
                         // 없는 자리가 있는 자리를 눌렀다. 여기서 할 일은
                         // 띠의 길이를 알려 주는 것뿐이다.
                         rest: kMuted,
+                        // 어디까지 들었는지. 지금 읽고 있는 글이면 그 자리를,
+                        // 아니면 마지막으로 멈춘 자리를 세운다.
+                        //
+                        // 한 번도 안 읽었거나 끝까지 읽은 글은 lastIndex 가
+                        // 0 이다([_persistProgress]). 그때는 두지 않는다 —
+                        // 모든 카드의 첫 칸에 표가 서면 뜻이 없다.
+                        current: _engine.sourceId == s.id &&
+                                _engine.currentIndex >= 0
+                            ? _engine.currentIndex
+                            : (s.lastIndex > 0 ? s.lastIndex : null),
                       ),
                     ],
                   ],

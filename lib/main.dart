@@ -830,56 +830,17 @@ class _TTSPageState extends State<TTSPage> with WidgetsBindingObserver {
     ///
     /// 몇 시간을 들여 쌓인 것이 한 번의 잘못 누름으로 사라지는 자리다.
     /// 시트 안에 또 시트를 얹으면 어느 쪽 단추인지 헷갈리므로 팝업으로 띄운다.
-    Future<bool> confirm() async {
-      final ok = await showDialog<bool>(
-        context: context,
-        builder: (ctx) => Dialog(
-          backgroundColor: kSteel,
-          shape: const PixelBorder(unit: 5),
-          insetPadding: const EdgeInsets.symmetric(horizontal: 28),
-          child: Padding(
-            padding: const EdgeInsets.fromLTRB(20, 22, 20, 20),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                Text('ERASE ALL VOICES?',
-                    style: displayStyle(
-                        size: 15, color: kYellow, letterSpacing: 1.8)),
-                const SizedBox(height: 16),
-                Text(
-                  'This deletes every voice made so far'
-                  '${bytes != null && bytes > 0 ? ' (${_mb(bytes)})' : ''}'
-                  ' and where you left off in each text.\n\n'
-                  'Your texts stay. Voices are made again as you read.',
-                  style: const TextStyle(
-                      fontSize: 14, color: kOnSteel, height: 1.45),
-                ),
-                const SizedBox(height: 22),
-                // REMAKE 시트와 같은 4:6 — 물러나는 쪽이 좁다
-                Row(children: [
-                  Expanded(
-                    flex: 4,
-                    child: _sheetButton('CANCEL',
-                        color: kSlate, onTap: () => Navigator.pop(ctx, false)),
-                  ),
-                  const SizedBox(width: 10),
-                  Expanded(
-                    flex: 6,
-                    // 되돌릴 수 없는 쪽이라 붉게 — 노랑은 '해도 좋다' 는 색이다
-                    child: _sheetButton('ERASE',
-                        color: kRed,
-                        labelColor: Colors.white,
-                        onTap: () => Navigator.pop(ctx, true)),
-                  ),
-                ]),
-              ],
-            ),
+    Future<bool> confirm() => _confirmDialog(
+          title: 'ERASE ALL VOICES?',
+          confirm: 'ERASE',
+          body: Text(
+            'This deletes every voice made so far'
+            '${bytes != null && bytes > 0 ? ' (${_mb(bytes)})' : ''}'
+            ' and where you left off in each text.\n\n'
+            'Your texts stay. Voices are made again as you read.',
+            style: _dialogBody,
           ),
-        ),
-      );
-      return ok == true;
-    }
+        );
 
     Future<void> clear() async {
       if (!await confirm()) return;
@@ -1504,31 +1465,16 @@ class _TTSPageState extends State<TTSPage> with WidgetsBindingObserver {
 
   /// x 버튼 → 확인 팝업 → 완전 삭제
   Future<void> _confirmDelete(SourceItem item) async {
-    final ok = await showDialog<bool>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        backgroundColor: kSteel,
-        shape: const PixelBorder(unit: 5),
-        title: const Text('Delete this?',
-            style: TextStyle(fontSize: 18, color: Colors.white)),
-        content: Text(
-          byWord(item.label.length > 60
-              ? '${item.label.substring(0, 60)}…'
-              : item.label),
-          style: const TextStyle(fontSize: 15, color: kOnSteel),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx, false),
-            child: const Text('Cancel',
-                style: TextStyle(fontSize: 16, color: kOnSteel)),
-          ),
-          TextButton(
-            onPressed: () => Navigator.pop(ctx, true),
-            child: const Text('Delete',
-                style: TextStyle(fontSize: 16, color: kYellow)),
-          ),
-        ],
+    final ok = await _confirmDialog(
+      title: 'DELETE THIS?',
+      confirm: 'DELETE',
+      // 어느 글인지 알아볼 만큼만 적는다. 뒤에 카드가 보이지만 팝업에
+      // 가릴 수 있어, 앞머리를 그대로 옮겨 둔다.
+      body: Text(
+        byWord(item.label.length > 60
+            ? '${item.label.substring(0, 60)}…'
+            : item.label),
+        style: _dialogBody,
       ),
     );
     if (ok != true) return;
@@ -1564,54 +1510,19 @@ class _TTSPageState extends State<TTSPage> with WidgetsBindingObserver {
       return;
     }
 
-    final ok = await showDialog<bool>(
-      context: context,
-      builder: (ctx) => Dialog(
-        backgroundColor: kSteel,
-        shape: const PixelBorder(unit: 5),
-        insetPadding: const EdgeInsets.symmetric(horizontal: 28),
-        child: Padding(
-          padding: const EdgeInsets.fromLTRB(20, 22, 20, 20),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              Text('ERASE VOICES?',
-                  style: displayStyle(
-                      size: 15, color: kYellow, letterSpacing: 1.8)),
-              const SizedBox(height: 14),
-              // 한 줄이면 된다.
-              //
-              // 글 이름도 용량도 적지 않는다. 누른 카드 위에 뜨는 팝업이라
-              // 어느 글인지는 뒤에 보이고, 얼마인지는 지울지 말지를 정하는
-              // 데 쓰이지 않는다. 설정의 ERASE 는 전부를 지우는 것이라
-              // 용량을 적었지만, 여기는 그 글 하나다.
-              const Text(
-                'This deletes the voices made for this text '
-                'and where you left off in it.',
-                style: TextStyle(
-                    fontSize: 14, color: kOnSteel, height: 1.45),
-              ),
-              const SizedBox(height: 22),
-              // 설정의 ERASE 와 같은 4:6 — 되돌릴 수 없는 쪽이 붉다
-              Row(children: [
-                Expanded(
-                  flex: 4,
-                  child: _sheetButton('CANCEL',
-                      color: kSlate, onTap: () => Navigator.pop(ctx, false)),
-                ),
-                const SizedBox(width: 10),
-                Expanded(
-                  flex: 6,
-                  child: _sheetButton('ERASE',
-                      color: kRed,
-                      labelColor: Colors.white,
-                      onTap: () => Navigator.pop(ctx, true)),
-                ),
-              ]),
-            ],
-          ),
-        ),
+    final ok = await _confirmDialog(
+      title: 'ERASE VOICES?',
+      confirm: 'ERASE',
+      // 한 줄이면 된다.
+      //
+      // 글 이름도 용량도 적지 않는다. 누른 카드 위에 뜨는 팝업이라 어느
+      // 글인지는 뒤에 보이고, 얼마인지는 지울지 말지를 정하는 데 쓰이지
+      // 않는다. 설정의 ERASE 는 전부를 지우는 것이라 용량을 적었지만,
+      // 여기는 그 글 하나다.
+      body: const Text(
+        'This deletes the voices made for this text '
+        'and where you left off in it.',
+        style: _dialogBody,
       ),
     );
     if (ok != true) return;
@@ -1951,6 +1862,65 @@ class _TTSPageState extends State<TTSPage> with WidgetsBindingObserver {
   }
 
   /// 시트 아래에 서는 단추 하나
+  /// 되돌릴 수 없는 일을 하기 전에 묻는 팝업.
+  ///
+  /// 세 자리가 같은 모양이라야 손이 헷갈리지 않는다 — 글 지우기, 그 글의
+  /// 음성 지우기, 만들어둔 음성 전부 지우기. 제목은 표시어로, 아래는 4:6
+  /// 박스 단추로. 물러나는 쪽이 좁고, 되돌릴 수 없는 쪽이 붉다. 노랑은 이
+  /// 앱에서 '해도 좋다' 는 색이라 여기에는 쓰지 않는다.
+  ///
+  /// 시트 안에서 부를 때도 시트를 겹치지 않고 팝업으로 띄운다 — 겹치면
+  /// 어느 쪽 단추인지 헷갈린다.
+  Future<bool> _confirmDialog({
+    required String title,
+    required Widget body,
+    required String confirm,
+  }) async {
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => Dialog(
+        backgroundColor: kSteel,
+        shape: const PixelBorder(unit: 5),
+        insetPadding: const EdgeInsets.symmetric(horizontal: 28),
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(20, 22, 20, 20),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Text(title,
+                  style: displayStyle(
+                      size: 15, color: kYellow, letterSpacing: 1.8)),
+              const SizedBox(height: 16),
+              body,
+              const SizedBox(height: 22),
+              Row(children: [
+                Expanded(
+                  flex: 4,
+                  child: _sheetButton('CANCEL',
+                      color: kSlate, onTap: () => Navigator.pop(ctx, false)),
+                ),
+                const SizedBox(width: 10),
+                Expanded(
+                  flex: 6,
+                  child: _sheetButton(confirm,
+                      color: kRed,
+                      labelColor: Colors.white,
+                      onTap: () => Navigator.pop(ctx, true)),
+                ),
+              ]),
+            ],
+          ),
+        ),
+      ),
+    );
+    return ok == true;
+  }
+
+  /// 팝업 본문에 쓰는 글자 모양
+  static const _dialogBody =
+      TextStyle(fontSize: 14, color: kOnSteel, height: 1.45);
+
   /// [labelColor] 를 주면 글자색을 바꾼다 — 붉은 바탕처럼 바탕이 짙어
   /// 기본 어두운 글자가 묻히는 자리에 쓴다.
   Widget _sheetButton(String label,
